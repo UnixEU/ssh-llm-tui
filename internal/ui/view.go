@@ -39,6 +39,8 @@ func (m *Model) View() string {
 		body = m.viewTarget()
 	case screenFit:
 		body = m.viewFit()
+	case screenChanges:
+		body = m.viewChanges(bodyH)
 	default:
 		body = "ssh-llm-tui"
 	}
@@ -138,6 +140,13 @@ func (m *Model) viewChat(bodyH int) string {
 	if right == "" {
 		right = "v" + m.version
 	}
+	title := m.cfg.Chat.Title
+	if m.editActive() {
+		title += " · EDIT"
+		if n := m.workspace().Pending(); n > 0 {
+			title += fmt.Sprintf(" · %d to review", n)
+		}
+	}
 	inputH := 1
 	if !m.compact() && bodyH >= 10 {
 		inputH = 3
@@ -158,7 +167,7 @@ func (m *Model) viewChat(bodyH int) string {
 	}
 	header := ""
 	if maxHeader > 0 {
-		header = m.fitHeader(m.cfg.Chat.Title, right, maxHeader)
+		header = m.fitHeader(title, right, maxHeader)
 	}
 	headerH := 0
 	if header != "" {
@@ -292,6 +301,8 @@ func (m *Model) helpLabels(short bool) []string {
 		return []string{"ctrl+q exit"}
 	case screenContext, screenTarget, screenFit:
 		return m.fitHelp(short)
+	case screenChanges:
+		return m.changesHelp(short)
 	default:
 		if m.filesFocus {
 			if short {
@@ -300,7 +311,11 @@ func (m *Model) helpLabels(short bool) []string {
 			return []string{"space include (file/dir)", "d remove", "D clear all", "j/k pgup g/G", "esc/ctrl+f back", "ctrl+q exit"}
 		}
 		if short {
-			return []string{"enter", "ctrl+t", "ctrl+r", "ctrl+n", "ctrl+o", "ctrl+f", "pgup", "esc", "ctrl+q"}
+			out := []string{"enter", "ctrl+t", "ctrl+r", "ctrl+n", "ctrl+o", "ctrl+f"}
+			if m.editsReady() {
+				out = append(out, "ctrl+e")
+			}
+			return append(out, "pgup", "esc", "ctrl+q")
 		}
 		md := "ctrl+r raw"
 		if !m.markdown {
@@ -310,7 +325,11 @@ func (m *Model) helpLabels(short bool) []string {
 		if m.cfg.ConfiguresDMR() {
 			opts = append(opts, "ctrl+o options")
 		}
-		return append(opts, "ctrl+f files", "pgup/pgdn scroll", "esc welcome", "ctrl+q exit")
+		opts = append(opts, "ctrl+f files")
+		if m.editsReady() {
+			opts = append(opts, "ctrl+e changes")
+		}
+		return append(opts, "pgup/pgdn scroll", "esc welcome", "ctrl+q exit")
 	}
 }
 

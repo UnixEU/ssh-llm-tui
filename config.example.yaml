@@ -37,6 +37,11 @@ welcome:
       scp -P 2222 notes.txt user@host:uploads/
       scp -P 2222 -r folder user@host:uploads/
 
+    The model can propose changes to uploaded text files. Review them
+    with ctrl+e, export them, then fetch them from downloads/:
+
+      scp -P 2222 -r user@host:downloads/files .
+
     FileZilla and WinSCP can use the same port (SFTP).
   hint: Press any key to continue. ctrl+q exits.
 
@@ -98,3 +103,26 @@ fit:
   # GPU memory measured after each load, used when a header is unreadable.
   # off keeps it in memory only.
   usage_path: /data/fit/usage.json
+
+edit:
+  # Changes proposed by the model to uploaded text files. Nothing is used
+  # until it is accepted on the review screen (ctrl+e); uploads stay as
+  # they were. off hides edit mode.
+  mode: "on"
+  # blocks: SEARCH/REPLACE, WHOLE and DELETE blocks in the reply.
+  protocol: blocks
+  # Files one reply may change.
+  max_files: 20
+  allow_new: "on"
+  allow_delete: "off"
+
+downloads:
+  # Edited files, changes.patch and tar.gz archives, read-only for clients
+  # (get and delete). Removed with the user's last TUI session.
+  dir: /downloads
+  max_total_bytes: 209715200
+  archive: tar.gz
+  # Host and port shown in the download commands. Empty host prints "host";
+  # port 0 uses the SSH port.
+  public_host: ""
+  public_port: 0

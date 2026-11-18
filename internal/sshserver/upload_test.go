@@ -113,12 +113,13 @@ func TestSFTPPutListStatRemove(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The root lists the folders; files put at the root are in uploads/.
 	entries, err := client.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) < 4 {
-		t.Fatalf("list . = %d", len(entries))
+	if len(entries) != 1 || entries[0].Name() != "uploads" || !entries[0].IsDir() {
+		t.Fatalf("list . = %v", entries)
 	}
 	uploads, err := client.ReadDir("uploads")
 	if err != nil {

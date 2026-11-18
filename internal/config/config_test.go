@@ -338,3 +338,48 @@ func TestUploadTreeEnv(t *testing.T) {
 		}
 	}
 }
+
+func TestEditAndDownloadDefaultsAndEnv(t *testing.T) {
+	cfg, err := Load(LoadOptions{Getenv: envFrom(nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.EditOn() || !cfg.EditAllowNew() || cfg.EditAllowDelete() || cfg.Edit.MaxFiles != 20 || cfg.Edit.Protocol != "blocks" {
+		t.Fatalf("edit defaults %+v", cfg.Edit)
+	}
+	if cfg.Downloads.Dir != "/downloads" || cfg.Downloads.MaxTotalBytes != 200<<20 || cfg.Downloads.Archive != "tar.gz" || cfg.PublicPort() != 2222 || cfg.Downloads.PublicHost != "" {
+		t.Fatalf("download defaults %+v", cfg.Downloads)
+	}
+	cfg, err = Load(LoadOptions{Getenv: envFrom(map[string]string{
+		"EDIT_MODE":                "off",
+		"EDIT_MAX_FILES":           "5",
+		"EDIT_ALLOW_NEW":           "false",
+		"EDIT_ALLOW_DELETE":        "true",
+		"DOWNLOAD_DIR":             "/srv/dl",
+		"DOWNLOAD_MAX_TOTAL_BYTES": "1048576",
+		"PUBLIC_HOST":              "llm.example.lan",
+		"PUBLIC_PORT":              "22",
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EditOn() || cfg.EditAllowNew() || !cfg.EditAllowDelete() || cfg.Edit.MaxFiles != 5 {
+		t.Fatalf("edit env %+v", cfg.Edit)
+	}
+	if cfg.Downloads.Dir != "/srv/dl" || cfg.Downloads.MaxTotalBytes != 1<<20 || cfg.Downloads.PublicHost != "llm.example.lan" || cfg.PublicPort() != 22 {
+		t.Fatalf("download env %+v", cfg.Downloads)
+	}
+	for env, want := range map[string]string{
+		"EDIT_PROTOCOL":            "not available yet",
+		"DOWNLOAD_ARCHIVE":         "only tar.gz",
+		"EDIT_MAX_FILES":           "EDIT_MAX_FILES",
+		"DOWNLOAD_MAX_TOTAL_BYTES": "DOWNLOAD_MAX_TOTAL_BYTES",
+		"PUBLIC_PORT":              "PUBLIC_PORT",
+	} {
+		bad := map[string]string{"EDIT_PROTOCOL": "tools", "DOWNLOAD_ARCHIVE": "zip", "EDIT_MAX_FILES": "0", "DOWNLOAD_MAX_TOTAL_BYTES": "-1", "PUBLIC_PORT": "70000"}
+		_, err := Load(LoadOptions{Getenv: envFrom(map[string]string{env: bad[env]})})
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s: %v", env, err)
+		}
+	}
+}

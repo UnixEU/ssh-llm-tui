@@ -11,7 +11,7 @@ name: ssh-llm-tui
 services:
   ssh-llm-tui:
     build: .
-    image: ssh-llm-tui:1.2.0
+    image: ssh-llm-tui:1.3.0
     container_name: ssh-llm-tui
     init: true
     read_only: true
@@ -25,6 +25,10 @@ services:
       # tmpfs only uses RAM for what is stored. Raise the size for several
       # users uploading large trees at once. uid matches the image user.
       - /uploads:size=512m,uid=65532,gid=65532,mode=0755
+      # Per-user downloads (edited files, changes.patch, tar.gz archives),
+      # up to DOWNLOAD_MAX_TOTAL_BYTES (200 MiB) per user. Wiped with the
+      # user's last TUI session, like uploads.
+      - /downloads:size=512m,uid=65532,gid=65532,mode=0755
     ports:
       - "2222:2222"
     # host-gateway is the host bridge address (172.17.0.1 on a typical
@@ -65,6 +69,20 @@ services:
       UPLOAD_IGNORE: .git,node_modules,.venv,__pycache__,.DS_Store
       UPLOAD_AUTO_INCLUDE: "20"
       CONTEXT_TOKEN_BUDGET: "8192"
+      # Model-proposed file changes, reviewed with ctrl+e (see README).
+      # Raise CONTEXT_TOKEN_BUDGET and the model context for larger edits.
+      EDIT_MODE: "on"
+      EDIT_PROTOCOL: blocks
+      EDIT_MAX_FILES: "20"
+      EDIT_ALLOW_NEW: "true"
+      EDIT_ALLOW_DELETE: "false"
+      DOWNLOAD_DIR: /downloads
+      DOWNLOAD_MAX_TOTAL_BYTES: "209715200"
+      DOWNLOAD_ARCHIVE: tar.gz
+      # Name and port clients use to reach this server. Only used to print
+      # exact scp/sftp download commands in the TUI.
+      # PUBLIC_HOST: llm.example.lan
+      # PUBLIC_PORT: "2222"
       IMAGE_MAX_PX: "1536"
       IMAGE_MAX_BYTES: "2097152"
       FILES_BOX_ROWS: "4"

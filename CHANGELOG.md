@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.0
+
+- The model can propose changes to uploaded files. With edit mode on (`EDIT_MODE`, default on while files are uploaded), the system prompt describes `SEARCH`/`REPLACE`, `WHOLE` and `DELETE` blocks, and each finished reply is scanned for them. Only the visible reply is read, never the reasoning.
+- Matching is exact first, then tolerant of trailing whitespace, then of indentation, with the replacement re-indented. A block that matches nowhere or more than once is refused with the reason and the nearest lines. `WHOLE` rewrites need the file shown in full. Only text files, paths checked like uploads, `UPLOAD_MAX_BYTES` per file, `EDIT_MAX_FILES` per reply. Deleting is off by default (`EDIT_ALLOW_DELETE=false`); new files are allowed (`EDIT_ALLOW_NEW`).
+- Uploads stay untouched. Accepted versions live in a per-session workspace, the next prompt uses them, and the file box marks edited files with `●`.
+- Review screen on `ctrl+e`: coloured diff per file, `a`/`r` accept or reject one, `A`/`R` all, `u` undo, `v` revert to the original, `f` send refused blocks back to the model, `m` toggle edit mode.
+- Downloads: `x` exports the changed and new files (`downloads/files/…`) plus a git-style `changes.patch`; `t` exports the whole uploaded folder with the changes merged as a `.tar.gz`. Fetch them with `scp -r user@host:downloads/files .`, `scp -O -r`, or `sftp` `get -r downloads`.
+- The SFTP/SCP root now lists two folders, `uploads/` and `downloads/`. Uploads work as before, including `scp -r folder user@host:uploads/` and `host:/uploads`. `downloads/` is read-only for clients except delete, and is wiped like uploads: at process start and when the user's last TUI session ends. Uploading a top-level folder named `downloads` to the remote root is no longer possible; upload into `uploads/`.
+- New settings: `EDIT_MODE`, `EDIT_PROTOCOL` (only `blocks` for now), `EDIT_MAX_FILES`, `EDIT_ALLOW_NEW`, `EDIT_ALLOW_DELETE`, `DOWNLOAD_DIR`, `DOWNLOAD_MAX_TOTAL_BYTES`, `DOWNLOAD_ARCHIVE` (`tar.gz`), `PUBLIC_HOST` and `PUBLIC_PORT` (used to print exact download commands).
+- Compose mounts `/downloads` as a 512 MiB tmpfs.
+
 ## 1.2.0
 
 - Uploads keep directories. `scp -r folder user@host:uploads/` stores each file under its relative path (`/uploads/<user>/folder/sub/file`). Works with the default SFTP-based `scp` and with the legacy protocol (`scp -O -r`), including a target that does not exist yet. `scp -r` downloads return the tree.

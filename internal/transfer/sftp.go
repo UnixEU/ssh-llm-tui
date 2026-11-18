@@ -8,21 +8,28 @@ import (
 	"io/fs"
 	"log"
 	"os"
-	"path"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/UnixEU/ssh-llm-tui/internal/downloads"
 	"github.com/UnixEU/ssh-llm-tui/internal/uploads"
 	"github.com/charmbracelet/ssh"
 	"github.com/pkg/sftp"
 )
 
-// Subsystem is the OpenSSH sftp subsystem handler. Clients only see their
-// own upload directory, with subdirectories: put, get, list, stat, mkdir,
-// rmdir, remove and rename.
+// Subsystem is the OpenSSH sftp subsystem handler for uploads only.
 func Subsystem(store *uploads.Store) ssh.SubsystemHandler {
+	return SubsystemWith(store, nil)
+}
+
+// SubsystemWith serves the virtual root with two folders. uploads/ allows
+// put, get, list, stat, mkdir, rmdir, remove and rename. downloads/
+// allows get, list, stat, remove and rmdir. Clients only ever see their
+// own files.
+func SubsystemWith(store *uploads.Store, dl *downloads.Store) ssh.SubsystemHandler {
 	return func(sess ssh.Session) {
-		h := sftpHandler{store: store, user: sess.User()}
+		h := sftpHandler{store: store, dl: dl, user: sess.User(), fs: vfs{up: store, dl: dl}}
 		srv := sftp.NewRequestServer(sess, sftp.Handlers{
 			FileGet:  h,
 			FilePut:  h,
@@ -45,7 +52,9 @@ func Subsystem(store *uploads.Store) ssh.SubsystemHandler {
 
 type sftpHandler struct {
 	store *uploads.Store
+	dl    *downloads.Store
 	user  string
+	fs    vfs
 }
 
 // clientErr maps store errors onto the SFTP status codes clients expect.
@@ -62,7 +71,26 @@ func clientErr(err error) error {
 	return err
 }
 
+// inDownloads reports whether p points into downloads/.
+func inDownloads(p string) bool {
+	a, _, err := resolve(p)
+	return err == nil && a == areaDownloads
+}
+
 func (h sftpHandler) Fileread(r *sftp.Request) (io.ReaderAt, error) {
+	if a, rel, err := resolve(r.Filepath); err == nil && a == areaDownloads {
+		if h.dl == nil || rel == "" {
+			h.warn("read", r.Filepath, errOr(err, errIsDir))
+			return nil, os.ErrNotExist
+		}
+		f, size, err := h.dl.Open(h.user, rel)
+		if err != nil {
+			h.warn("read", r.Filepath, err)
+			return nil, clientErr(err)
+		}
+		h.info("read", vpath(a, rel), size)
+		return f, nil
+	}
 	rel, err := uploadTarget(r.Filepath)
 	if err != nil || rel == "" {
 		h.warn("read", r.Filepath, errOr(err, errIsDir))
@@ -78,6 +106,10 @@ func (h sftpHandler) Fileread(r *sftp.Request) (io.ReaderAt, error) {
 }
 
 func (h sftpHandler) Filewrite(r *sftp.Request) (io.WriterAt, error) {
+	if inDownloads(r.Filepath) {
+		h.warn("write", r.Filepath, denyDownloads())
+		return nil, sftp.ErrSSHFxPermissionDenied
+	}
 	rel, err := uploadTarget(r.Filepath)
 	if err != nil || rel == "" {
 		err = errOr(err, errIsDir)
@@ -96,6 +128,9 @@ func (h sftpHandler) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 }
 
 func (h sftpHandler) Filecmd(r *sftp.Request) error {
+	if inDownloads(r.Filepath) || (r.Target != "" && inDownloads(r.Target)) {
+		return h.downloadsCmd(r)
+	}
 	switch r.Method {
 	case "Setstat":
 		return nil
@@ -168,15 +203,43 @@ func (h sftpHandler) Filecmd(r *sftp.Request) error {
 	}
 }
 
+// downloadsCmd allows remove and rmdir in downloads/; anything that would
+// write there (mkdir, rename, setstat) is refused.
+func (h sftpHandler) downloadsCmd(r *sftp.Request) error {
+	_, rel, err := resolve(r.Filepath)
+	if err == nil && h.dl == nil {
+		err = fs.ErrNotExist
+	}
+	switch r.Method {
+	case "Remove":
+		if err == nil {
+			err = h.dl.Remove(h.user, rel)
+		}
+		if err != nil {
+			h.warn("remove", r.Filepath, err)
+			return clientErr(err)
+		}
+		h.info("remove", vpath(areaDownloads, rel), 0)
+		return nil
+	case "Rmdir":
+		if err == nil {
+			err = h.dl.RemoveDir(h.user, rel)
+		}
+		if err != nil {
+			h.warn("rmdir", r.Filepath, err)
+			return clientErr(err)
+		}
+		h.info("rmdir", vpath(areaDownloads, rel), 0)
+		return nil
+	}
+	h.warn(strings.ToLower(r.Method), r.Filepath+" "+r.Target, denyDownloads())
+	return sftp.ErrSSHFxPermissionDenied
+}
+
 func (h sftpHandler) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 	switch r.Method {
 	case "List":
-		rel, err := uploadTarget(r.Filepath)
-		if err != nil {
-			h.warn("list", r.Filepath, err)
-			return nil, clientErr(err)
-		}
-		st, err := h.store.Stat(h.user, rel)
+		st, err := h.fs.stat(h.user, r.Filepath)
 		if err != nil {
 			h.warn("list", r.Filepath, err)
 			return nil, clientErr(err)
@@ -184,7 +247,7 @@ func (h sftpHandler) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 		if !st.IsDir {
 			return fileList{sftpInfo{name: st.Name, size: st.Size}}, nil
 		}
-		entries, err := h.store.ReadDir(h.user, rel)
+		entries, err := h.fs.readDir(h.user, r.Filepath)
 		if err != nil {
 			h.warn("list", r.Filepath, err)
 			return nil, clientErr(err)
@@ -196,16 +259,11 @@ func (h sftpHandler) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 		h.info("list", r.Filepath, int64(len(out)))
 		return out, nil
 	case "Stat", "Lstat":
-		rel, err := uploadTarget(r.Filepath)
+		st, err := h.fs.stat(h.user, r.Filepath)
 		if err != nil {
-			h.warn("stat", r.Filepath, err)
-			return nil, clientErr(err)
-		}
-		if rel == "" {
-			return fileList{sftpInfo{name: "uploads", dir: true}}, nil
-		}
-		st, err := h.store.Stat(h.user, rel)
-		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				h.warn("stat", r.Filepath, err)
+			}
 			// Clients stat targets before creating them, so a miss is normal.
 			return nil, clientErr(err)
 		}
@@ -216,14 +274,18 @@ func (h sftpHandler) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 	}
 }
 
-// RealPath makes clients see the upload directory as /uploads.
+// RealPath puts clients at the root, which holds uploads/ and downloads/.
+// Paths outside downloads/ are shown under /uploads.
 func (h sftpHandler) RealPath(p string) (string, error) {
-	rel, err := uploadTarget(p)
+	a, rel, err := resolve(p)
 	if err != nil {
 		h.warn("realpath", p, err)
 		return "", clientErr(err)
 	}
-	return path.Join("/uploads", rel), nil
+	if a == areaRoot {
+		return "/", nil
+	}
+	return "/" + vpath(a, rel), nil
 }
 
 var (
