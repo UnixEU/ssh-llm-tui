@@ -124,11 +124,22 @@ func (c Config) ConfiguresDMR() bool {
 	return c.FitOn() || c.ContextPicker() || c.TargetPicker() || c.Fit.KVCacheType != ""
 }
 
+// DefaultUploadIgnore is the default UPLOAD_IGNORE list.
+const DefaultUploadIgnore = ".git,node_modules,.venv,__pycache__,.DS_Store"
+
 // Uploads limits files received over SCP and SFTP.
 type Uploads struct {
-	Dir             string `yaml:"dir"`
-	MaxBytes        int64  `yaml:"max_bytes"`
-	MaxFiles        int    `yaml:"max_files"`
+	Dir           string `yaml:"dir"`
+	MaxBytes      int64  `yaml:"max_bytes"`
+	MaxFiles      int    `yaml:"max_files"`
+	MaxTotalBytes int64  `yaml:"max_total_bytes"`
+	// Ignore is a comma-separated list of path components (".git",
+	// "node_modules") whose contents are accepted and discarded.
+	// "none" turns it off.
+	Ignore string `yaml:"ignore"`
+	// AutoInclude is how many new files are included in the prompt
+	// automatically, within TokenBudget. Later files arrive excluded.
+	AutoInclude     int    `yaml:"auto_include"`
 	TokenBudget     int    `yaml:"token_budget"`
 	ImageMaxPx      int    `yaml:"image_max_px"`
 	ImageMaxBytes   int64  `yaml:"image_max_bytes"`
@@ -321,7 +332,17 @@ func (c *Config) normalize() {
 		c.Uploads.MaxBytes = 10 << 20
 	}
 	if c.Uploads.MaxFiles <= 0 {
-		c.Uploads.MaxFiles = 10
+		c.Uploads.MaxFiles = 1000
+	}
+	if c.Uploads.MaxTotalBytes <= 0 {
+		c.Uploads.MaxTotalBytes = 200 << 20
+	}
+	c.Uploads.Ignore = strings.TrimSpace(c.Uploads.Ignore)
+	if c.Uploads.Ignore == "" {
+		c.Uploads.Ignore = DefaultUploadIgnore
+	}
+	if c.Uploads.AutoInclude <= 0 {
+		c.Uploads.AutoInclude = 20
 	}
 	if c.Uploads.TokenBudget <= 0 {
 		c.Uploads.TokenBudget = 8192
@@ -548,6 +569,27 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 		}
 		c.Uploads.MaxFiles = n
 	}
+	if v, ok := lookup(getenv, "UPLOAD_MAX_TOTAL_BYTES"); ok {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("UPLOAD_MAX_TOTAL_BYTES: %w", err)
+		}
+		if n <= 0 {
+			return fmt.Errorf("UPLOAD_MAX_TOTAL_BYTES must be > 0")
+		}
+		c.Uploads.MaxTotalBytes = n
+	}
+	set("UPLOAD_IGNORE", &c.Uploads.Ignore)
+	if v, ok := lookup(getenv, "UPLOAD_AUTO_INCLUDE"); ok {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("UPLOAD_AUTO_INCLUDE: %w", err)
+		}
+		if n <= 0 {
+			return fmt.Errorf("UPLOAD_AUTO_INCLUDE must be > 0")
+		}
+		c.Uploads.AutoInclude = n
+	}
 	if v, ok := lookup(getenv, "CONTEXT_TOKEN_BUDGET"); ok {
 		n, err := strconv.Atoi(v)
 		if err != nil {
@@ -745,6 +787,15 @@ func (c Config) validate() error {
 	}
 	if c.Uploads.MaxFiles <= 0 {
 		return errors.New("uploads.max_files must be > 0")
+	}
+	if c.Uploads.MaxTotalBytes <= 0 {
+		return errors.New("uploads.max_total_bytes must be > 0")
+	}
+	if c.Uploads.MaxTotalBytes < c.Uploads.MaxBytes {
+		return errors.New("uploads.max_total_bytes must be >= uploads.max_bytes")
+	}
+	if c.Uploads.AutoInclude <= 0 {
+		return errors.New("uploads.auto_include must be > 0")
 	}
 	if c.Uploads.TokenBudget <= 0 {
 		return errors.New("uploads.token_budget must be > 0")

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -151,14 +152,18 @@ func TestSFTPPutListStatRemove(t *testing.T) {
 		t.Fatal("dot.txt still in the store")
 	}
 
-	if _, err := client.Create("../etc/passwd"); err == nil {
-		t.Fatal("traversal put was accepted")
+	// The SFTP server resolves ".." against "/" before the handler sees
+	// the path, so this lands inside the user's directory as etc/passwd.
+	put("../etc/passwd", "contained")
+	disk, err = store.FilePath("user", "etc/passwd")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := client.Create("uploads/sub/file.txt"); err == nil {
-		t.Fatal("subdir put was accepted")
+	if !strings.HasPrefix(disk, store.Dir()) {
+		t.Fatalf("escaped: %s", disk)
 	}
-	if _, err := store.Read("user", "passwd"); err == nil {
-		t.Fatal("traversal wrote passwd")
+	if _, err := os.Stat(disk); err != nil {
+		t.Fatal(err)
 	}
 }
 

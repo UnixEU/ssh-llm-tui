@@ -44,7 +44,7 @@ func TestLoadBakedInDefaults(t *testing.T) {
 	if !strings.Contains(cfg.Loading.Message, "{model}") {
 		t.Fatalf("loading message = %q", cfg.Loading.Message)
 	}
-	if cfg.Uploads.MaxBytes != 10<<20 || cfg.Uploads.MaxFiles != 10 || cfg.Uploads.TokenBudget != 8192 {
+	if cfg.Uploads.MaxBytes != 10<<20 || cfg.Uploads.MaxFiles != 1000 || cfg.Uploads.MaxTotalBytes != 200<<20 || cfg.Uploads.AutoInclude != 20 || cfg.Uploads.Ignore != DefaultUploadIgnore || cfg.Uploads.TokenBudget != 8192 {
 		t.Fatalf("uploads %+v", cfg.Uploads)
 	}
 	if cfg.Uploads.ImageMaxPx != 1536 || cfg.Uploads.ImageMaxBytes != 2<<20 || cfg.Uploads.FilesBoxRows != 4 {
@@ -309,6 +309,32 @@ func TestFitEnvRejectsBadValues(t *testing.T) {
 	} {
 		if _, err := Load(LoadOptions{Getenv: envFrom(map[string]string{k: v})}); err == nil {
 			t.Errorf("%s=%s accepted", k, v)
+		}
+	}
+}
+
+func TestUploadTreeEnv(t *testing.T) {
+	cfg, err := Load(LoadOptions{Getenv: envFrom(map[string]string{
+		"UPLOAD_MAX_FILES":       "50",
+		"UPLOAD_MAX_TOTAL_BYTES": "52428800",
+		"UPLOAD_IGNORE":          "none",
+		"UPLOAD_AUTO_INCLUDE":    "5",
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := cfg.Uploads
+	if u.MaxFiles != 50 || u.MaxTotalBytes != 50<<20 || u.Ignore != "none" || u.AutoInclude != 5 {
+		t.Fatalf("%+v", u)
+	}
+	for _, env := range []map[string]string{
+		{"UPLOAD_MAX_TOTAL_BYTES": "0"},
+		{"UPLOAD_MAX_TOTAL_BYTES": "abc"},
+		{"UPLOAD_MAX_TOTAL_BYTES": "1024"},
+		{"UPLOAD_AUTO_INCLUDE": "-1"},
+	} {
+		if _, err := Load(LoadOptions{Getenv: envFrom(env)}); err == nil {
+			t.Fatalf("accepted %v", env)
 		}
 	}
 }

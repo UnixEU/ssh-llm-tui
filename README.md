@@ -2,7 +2,7 @@
 
 SSH terminal chat for local models served by [Docker Model Runner](https://docs.docker.com/ai/model-runner/) (DMR). Connect with `ssh -p 2222 user@host` and you get this app instead of a shell.
 
-Version 1.1.1. The interface is a terminal UI, built with Go and the Charm stack (Wish, Bubble Tea, Lip Gloss, Bubbles). Released under the MIT license. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
+Version 1.2.0. The interface is a terminal UI, built with Go and the Charm stack (Wish, Bubble Tea, Lip Gloss, Bubbles). Released under the MIT license. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
 
 The container talks to DMR only over HTTP. It does not mount the Docker socket and it does not call the `docker` CLI, so it cannot pull models or start containers.
 
@@ -128,9 +128,12 @@ The window can be resized. Finished assistant replies are rendered again at the 
 | `CHAT_TITLE`, `CHAT_PLACEHOLDER`, `SYSTEM_PROMPT`, `CHAT_YOU_LABEL` | see YAML | chat copy and the system prompt |
 | `MARKDOWN` | `on` | `on` renders finished assistant replies. `off` leaves them plain. `ctrl+r` toggles the session |
 | `FOOTER_CHANGE`, `FOOTER_EXIT`, `FOOTER_SCROLL` | see YAML | accepted and ignored. The help bar is drawn by the app |
-| `UPLOAD_DIR` | `/uploads` | on-disk root. Files live in `/uploads/<user>/` |
-| `UPLOAD_MAX_BYTES` | `10485760` | per file |
-| `UPLOAD_MAX_FILES` | `10` | per username |
+| `UPLOAD_DIR` | `/uploads` | on-disk root. Files live in `/uploads/<user>/<relative path>` |
+| `UPLOAD_MAX_BYTES` | `10485760` | per file (10 MiB) |
+| `UPLOAD_MAX_FILES` | `1000` | files per username. Directories are capped at the same number |
+| `UPLOAD_MAX_TOTAL_BYTES` | `209715200` | total size of all files per username (200 MiB) |
+| `UPLOAD_IGNORE` | `.git,node_modules,.venv,__pycache__,.DS_Store` | comma-separated path component names. Anything at or under such a component is accepted and discarded. `none` turns it off |
+| `UPLOAD_AUTO_INCLUDE` | `20` | how many new files are included in the prompt automatically, within `CONTEXT_TOKEN_BUDGET` |
 | `CONTEXT_TOKEN_BUDGET` | `8192` | rough byte/4 cap for included text. Once a context size is chosen, the cap is three quarters of it |
 | `IMAGE_MAX_PX` | `1536` | longest side after downscale |
 | `IMAGE_MAX_BYTES` | `2097152` | encoded image payload cap |
@@ -199,14 +202,25 @@ SCP and SFTP listen on the same port and use the same auth as the TUI.
 
 ```bash
 scp -P 2222 notes.txt user@host:uploads/
+scp -P 2222 -r folder user@host:uploads/
 sftp -P 2222 user@host
 ```
 
-`host:` (the remote root) and `host:uploads/name` land in the same per-user directory. Nothing outside that directory is writable.
+`host:` (the remote root), `host:uploads/` and `host:/uploads` are the same per-user directory. Nothing outside that directory is writable.
+
+Directories are kept. `scp -r folder user@host:uploads/` stores every file under its relative path, for example `folder/src/main.go`, on disk as `/uploads/<user>/folder/src/main.go`. As with any scp server, a target that does not exist yet (`host:uploads/newname`) becomes the top directory. Both modes work: the default SFTP-based `scp` of current OpenSSH, and the legacy protocol with `scp -O -r`. Over SFTP you can `mkdir`, `ls` any subdirectory, `rename`, `rm` and `rmdir` (which removes the whole tree). Downloads work too: `scp -P 2222 -r user@host:uploads/folder .`.
+
+Each path component is checked: `..`, absolute paths, empty components and control characters are refused, paths are at most 16 levels deep and 1024 bytes long, and nothing is written through a symlink.
+
+Uploading a whole Git checkout is the intended use. Components listed in `UPLOAD_IGNORE` (default `.git`, `node_modules`, `.venv`, `__pycache__`, `.DS_Store`) are accepted, so `scp -r` does not stop, but their data is dropped and does not count toward the limits. The server logs one INFO line per ignored directory.
+
+Limits are per username: `UPLOAD_MAX_BYTES` per file (10 MiB), `UPLOAD_MAX_FILES` files (1000) and `UPLOAD_MAX_TOTAL_BYTES` in total (200 MiB). A file over a limit is refused on its own and logged at WARN with the name of the variable, for example `limit of 1000 files per user reached (UPLOAD_MAX_FILES)`. Files already stored stay as they are and a refused file never lands half written. In SFTP mode `scp` reports the failed file and goes on with the rest. The legacy protocol (`scp -O`) has no per-file error, so it stops at the first refused file.
 
 FileZilla and WinSCP work over SFTP to port 2222. Plain text, Markdown, source, CSV, JSON, YAML, and logs are included as UTF-8. DOCX text is read from `word/document.xml`. PDF text is extracted with a pure-Go reader. A scanned PDF has no text layer, so the box shows that nothing could be extracted. There is no OCR.
 
-On the chat screen the file list is a full-width strip just above the input. Unfocused it is one line, `files: 7 (3 incl, 2 img) — ctrl+f`. `ctrl+f` expands it to `FILES_BOX_ROWS` (default 4) single-line rows. A long name is cut with `…` and does not wrap. `j`/`k`, arrows, pgup, and pgdn scroll the list. `esc` or `ctrl+f` leaves the list. Space toggles include, `d` removes one file, `D` clears every file after a y/n confirm. The `scp` hint sits on the title line of the open box.
+On the chat screen the file list is a full-width strip just above the input. Unfocused it is one line, `files: 7 (3 incl, ~2.1k/8.2kt, 2 img) — ctrl+f`: files, included files, the included token estimate against the context budget (`over` when it does not fit), and images. `ctrl+f` expands it to `FILES_BOX_ROWS` (default 4) single-line rows. Uploaded directories appear as tree rows (`folder/`, then its files indented) with `included/total` and the included tokens of everything below. A long name is cut with `…` and does not wrap. `j`/`k`, arrows, pgup and pgdn scroll the list, `g`/`G` (or home/end) jump to the top or bottom. `esc` or `ctrl+f` leaves the list. Space toggles include on a file, or on every file under the selected directory (all on, or all off when all were on). `d` removes the selected file or directory tree, `D` clears every file after a y/n confirm. The `scp` hint and the token gauge sit on the title line of the open box.
+
+New uploads are included automatically until `UPLOAD_AUTO_INCLUDE` (default 20) files are included or the included text would pass `CONTEXT_TOKEN_BUDGET`. The first file is always included. After that, new files arrive excluded (`✗`), so a large tree does not flood the prompt; include the directories you need with space. Included files are sent in path order. When they do not all fit the budget, the first file that does not fit is cut, and the prompt ends with a note naming the files that were left out. The prompt lists included files by their relative path.
 
 PNG, JPEG, WebP, and GIF (first frame) are detected by magic bytes. They are scaled so the long side is at most `IMAGE_MAX_PX` (default 1536) and re-encoded under `IMAGE_MAX_BYTES` (default 2MiB). The row shows `img` and the sent dimensions, for example `img 1920x1080  307 KiB`. Text files still show size and `~Nt`.
 
@@ -216,7 +230,7 @@ DMR's model list does not say whether a model can see images. This app still tri
 
 llama.cpp accepts images when that model was loaded with an mmproj (a vision projector). `docker model inspect <model>` is the check: look for an mmproj file, a vision projector, or a VL / vision tag. A text quant such as `ai/qwen3.8:27b-q4_K_M` needs that projector in the model card. `ai/gpt-oss:20b` is a text model. vLLM vision models use the same `/engines/v1` path when DMR routes them there.
 
-Bytes are stored under `UPLOAD_DIR` (default `/uploads/<user>/`), which compose mounts as a tmpfs. The directory is emptied when the process starts and when that user's last TUI session ends.
+Bytes are stored under `UPLOAD_DIR` (default `/uploads/<user>/`), which compose mounts as a tmpfs (512 MiB, only what is stored uses RAM). The directory is emptied when the process starts and when that user's last TUI session ends. Open the TUI first, upload, and work with the files in that session.
 
 ## GPU panel
 
@@ -346,7 +360,7 @@ A model list entry looks like `docker.io/ai/gpt-oss:20b` with an empty `dmr` obj
 go test ./...
 go vet ./...
 go test -race ./...
-docker build -t ssh-llm-tui:1.1.1 .
+docker build -t ssh-llm-tui:1.2.0 .
 ```
 
 Go 1.24 or newer. The module downloads a newer toolchain if the system Go is older.

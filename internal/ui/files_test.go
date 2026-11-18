@@ -31,7 +31,7 @@ func TestFileBoxCollapsedAndSingleLine(t *testing.T) {
 	if lipgloss.Height(view) != m.height {
 		t.Fatalf("view height %d want %d", lipgloss.Height(view), m.height)
 	}
-	if !strings.Contains(view, "files: 1 (1 incl, 1 img) — ctrl+f") {
+	if !strings.Contains(view, "files: 1 (1 incl, ~0/8.2kt, 1 img) — ctrl+f") {
 		t.Fatalf("summary missing:\n%s", view)
 	}
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
@@ -183,7 +183,7 @@ func TestFocusedFileBoxShowsNote(t *testing.T) {
 	m.width = 80
 	m.height = 24
 	collapsed := m.View()
-	if !strings.Contains(collapsed, "files: 2 (2 incl, 0 img) — ctrl+f") {
+	if !strings.Contains(collapsed, "files: 2 (2 incl, ~0/8.2kt, 0 img) — ctrl+f") {
 		t.Fatalf("summary:\n%s", collapsed)
 	}
 	if strings.Contains(collapsed, "image:") || strings.Contains(collapsed, "not UTF-8") {

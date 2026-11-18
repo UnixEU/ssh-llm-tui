@@ -11,7 +11,7 @@ name: ssh-llm-tui
 services:
   ssh-llm-tui:
     build: .
-    image: ssh-llm-tui:1.1.1
+    image: ssh-llm-tui:1.2.0
     container_name: ssh-llm-tui
     init: true
     read_only: true
@@ -21,8 +21,10 @@ services:
       - no-new-privileges:true
     tmpfs:
       - /tmp
-      # Per-user uploads. 10 files * 10MiB plus headroom. uid matches the image user.
-      - /uploads:size=128m,uid=65532,gid=65532,mode=0755
+      # Per-user uploads, up to UPLOAD_MAX_TOTAL_BYTES (200 MiB) per user.
+      # tmpfs only uses RAM for what is stored. Raise the size for several
+      # users uploading large trees at once. uid matches the image user.
+      - /uploads:size=512m,uid=65532,gid=65532,mode=0755
     ports:
       - "2222:2222"
     # host-gateway is the host bridge address (172.17.0.1 on a typical
@@ -58,7 +60,10 @@ services:
       GPU_MEM_CRIT: "90"
       MARKDOWN: "on"
       UPLOAD_MAX_BYTES: "10485760"
-      UPLOAD_MAX_FILES: "10"
+      UPLOAD_MAX_FILES: "1000"
+      UPLOAD_MAX_TOTAL_BYTES: "209715200"
+      UPLOAD_IGNORE: .git,node_modules,.venv,__pycache__,.DS_Store
+      UPLOAD_AUTO_INCLUDE: "20"
       CONTEXT_TOKEN_BUDGET: "8192"
       IMAGE_MAX_PX: "1536"
       IMAGE_MAX_BYTES: "2097152"
