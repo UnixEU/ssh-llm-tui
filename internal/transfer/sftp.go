@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/UnixEU/ssh-llm-tui/internal/uploads"
@@ -202,35 +203,88 @@ func errOr(err, fallback error) error {
 	return fallback
 }
 
+// putAt buffers one upload. The request server runs WriteAt on a worker
+// pool, so several chunks of the same file are in flight together. Close
+// is dispatched only after those writes have returned. Each chunk is
+// copied under the lock before WriteAt returns.
 type putAt struct {
-	store *uploads.Store
-	user  string
-	name  string
-	max   int64
-	buf   []byte
+	mu     sync.Mutex
+	store  *uploads.Store
+	user   string
+	name   string
+	max    int64
+	buf    []byte
+	size   int64
+	closed bool
 }
 
 func (p *putAt) WriteAt(b []byte, off int64) (int, error) {
-	end := off + int64(len(b))
-	if end > p.max {
+	if off < 0 {
 		return 0, fs.ErrInvalid
 	}
-	if int64(len(p.buf)) < end {
-		next := make([]byte, end)
-		copy(next, p.buf)
-		p.buf = next
+	end := off + int64(len(b))
+	if end < off || end > p.max || end > int64(^uint(0)>>1) {
+		return 0, fs.ErrInvalid
 	}
-	copy(p.buf[off:], b)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return 0, fs.ErrClosed
+	}
+	offN, endN := int(off), int(end)
+	if end > int64(len(p.buf)) {
+		if end > int64(cap(p.buf)) {
+			next := make([]byte, endN, int(growCap(int64(cap(p.buf)), end, p.max)))
+			copy(next, p.buf)
+			p.buf = next
+		} else {
+			p.buf = p.buf[:endN]
+		}
+	}
+	copy(p.buf[offN:endN], b)
+	if end > p.size {
+		p.size = end
+	}
 	return len(b), nil
 }
 
 func (p *putAt) Close() error {
-	if err := p.store.Put(p.user, p.name, p.buf); err != nil {
-		log.Printf("WARN sftp user=%s op=write name=%q bytes=%d err=%v", p.user, p.name, len(p.buf), err)
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return nil
+	}
+	p.closed = true
+	data := append([]byte(nil), p.buf[:int(p.size)]...)
+	p.mu.Unlock()
+	if err := p.store.Put(p.user, p.name, data); err != nil {
+		log.Printf("WARN sftp user=%s op=write name=%q bytes=%d err=%v", p.user, p.name, len(data), err)
 		return err
 	}
-	log.Printf("INFO sftp user=%s op=write name=%q bytes=%d", p.user, p.name, len(p.buf))
+	log.Printf("INFO sftp user=%s op=write name=%q bytes=%d", p.user, p.name, len(data))
 	return nil
+}
+
+// growCap picks the next slice capacity. It doubles until need is covered
+// so a long upload does not copy the whole buffer on every chunk.
+func growCap(cur, need, max int64) int64 {
+	if need > max {
+		need = max
+	}
+	n := cur
+	if n < 32<<10 {
+		n = 32 << 10
+	}
+	if n > max {
+		n = max
+	}
+	for n < need {
+		if n > max/2 {
+			return max
+		}
+		n *= 2
+	}
+	return n
 }
 
 type fileList []fs.FileInfo

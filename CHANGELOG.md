@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+
+- Clients that pipeline concurrent SFTP writes, such as OpenSSH sftp, could store a truncated or corrupt upload. The upload buffer is locked and grows by doubling. SCP already reads one file as a single stream and is unchanged.
+- The focused file box shows the selected file's note, including an image decode error or a skipped binary. A failed image decode is logged at WARN with the error text.
+
 ## 1.0.0
 
 First public release. An SSH terminal UI for local models served by Docker Model Runner.
