@@ -1,0 +1,68 @@
+# ssh-llm-tui screen text.
+# Environment variables override these fields. See the README for the names.
+# Operational settings (listen address, DMR URL, auth) live here too and are
+# also overridable by environment variables. Env wins over this file.
+
+server:
+  host: 0.0.0.0
+  port: 2222
+  host_key_path: /data/hostkeys/ssh_host_ed25519_key
+  # open: anyone who can reach the port gets a session (LAN default).
+  # keys: only public keys listed in authorized_keys_path are accepted.
+  auth_mode: open
+  authorized_keys_path: ""
+
+dmr:
+  # From a container on Docker Engine, host-gateway is the host's bridge
+  # address (172.17.0.1 on a typical docker0). Compose must map the name:
+  #   extra_hosts: ["host.docker.internal:host-gateway"]
+  # DMR commonly publishes 12434 on 127.0.0.1 and on the docker0 gateway only.
+  # 127.0.0.1 inside the container is the container itself, not the host.
+  # Direct alternative, if the bridge IP is reachable: http://172.17.0.1:12434
+  base_url: http://host.docker.internal:12434
+  request_timeout: 60s
+  warm_timeout: 10m
+
+welcome:
+  title: ssh-llm-tui
+  # Optional ASCII art. Read again every time the welcome screen is shown.
+  # Compose mounts ./welcome/banner.txt here. Leave empty to skip the art.
+  banner_file: ""
+  message: |
+    Welcome. This session chats with local models on Docker Model Runner.
+
+    Upload a file from another terminal, then include it with ctrl+f:
+
+      scp -P 2222 notes.txt user@host:uploads/
+
+    FileZilla and WinSCP can use the same port (SFTP).
+  hint: Press any key to continue. ctrl+q exits.
+
+models:
+  title: Choose a model
+  empty: |
+    No models are pulled into Docker Model Runner yet.
+
+    The runner answered, and its model list is empty. Pull a model on
+    the Docker host (this SSH session cannot pull one), for example:
+
+      docker model pull ai/smollm2
+
+    Then press r to refresh this list.
+  hint: Enter selects a model. r refreshes the list.
+  loading: Fetching models from Docker Model Runner…
+
+loading:
+  title: Loading model
+  message: Warming {model} into GPU memory. Every SSH session shares this GPU.
+
+chat:
+  title: Chat
+  placeholder: Message the model, then press enter
+  system_prompt: You are a helpful assistant running locally via Docker Model Runner. Answer concisely.
+  you_label: you
+
+footer:
+  change_model: ctrl+n change model
+  exit: ctrl+q / esc exit
+  scroll: pgup/pgdn scroll

@@ -1,0 +1,97 @@
+# ssh-llm-tui talks to Docker Model Runner over HTTP only.
+# Do not add a docker.sock mount and do not install the docker CLI in the image.
+# DMR itself is already running on the host (container docker-model-runner).
+# This file does not start a second model runner.
+
+services:
+  ssh-llm-tui:
+    build: .
+    image: ssh-llm-tui:1.0.0
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+      # Per-user uploads. 10 files * 10MiB plus headroom. uid matches the image user.
+      - /uploads:size=128m,uid=65532,gid=65532,mode=0755
+    ports:
+      - "2222:2222"
+    # host-gateway is the host bridge address (172.17.0.1 on a typical
+    # docker0), where DMR commonly publishes port 12434. The name is not
+    # built in on Docker Engine, so the extra host entry is required.
+    # model-runner.docker.internal is the name from the Docker docs. It is
+    # mapped as well so either base URL works.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "model-runner.docker.internal:host-gateway"
+    # Stats only. utility does not reserve the GPU for inference; DMR keeps that.
+    # Requires the NVIDIA container toolkit on the host.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [utility]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: utility
+      GPU_STATS: auto
+      GPU_POLL_INTERVAL: 2s
+      GPU_TEMP_WARN: "50"
+      GPU_TEMP_HOT: "60"
+      GPU_TEMP_CRIT: "70"
+      GPU_POWER_WARN: "50"
+      GPU_POWER_HOT: "75"
+      GPU_POWER_CRIT: "150"
+      GPU_MEM_WARN: "25"
+      GPU_MEM_HOT: "50"
+      GPU_MEM_CRIT: "75"
+      MARKDOWN: "on"
+      UPLOAD_MAX_BYTES: "10485760"
+      UPLOAD_MAX_FILES: "10"
+      CONTEXT_TOKEN_BUDGET: "8192"
+      IMAGE_MAX_PX: "1536"
+      IMAGE_MAX_BYTES: "2097152"
+      FILES_BOX_ROWS: "4"
+      # VISION_MODELS: "ai/*vl*"
+      # NON_VISION_MODELS: "ai/gpt-oss*"
+      WELCOME_BANNER_FILE: /config/welcome/banner.txt
+      # Default. DMR is published on 127.0.0.1 and 172.17.0.1 only.
+      # 127.0.0.1 inside this container is not the host.
+      DMR_BASE_URL: http://host.docker.internal:12434
+      # Direct alternative, if host-gateway is not usable:
+      # DMR_BASE_URL: http://172.17.0.1:12434
+      DMR_REQUEST_TIMEOUT: 60s
+      DMR_WARM_TIMEOUT: 10m
+      AUTH_MODE: open
+      # Switch to key auth by setting AUTH_MODE=keys and mounting a file:
+      # AUTH_MODE: keys
+      # AUTHORIZED_KEYS_PATH: /keys/authorized_keys
+      CONFIG_PATH: /config/config.yaml
+      HOST_KEY_PATH: /data/hostkeys/ssh_host_ed25519_key
+      SSH_HOST: 0.0.0.0
+      SSH_PORT: "2222"
+      # These override the same fields in the YAML file.
+      WELCOME_TITLE: ssh-llm-tui
+      # Leave WELCOME_MESSAGE unset when banner.txt is in use. The welcome
+      # screen is the banner alone while that file fits the terminal.
+      # WELCOME_MESSAGE: |
+      #   Welcome. This session chats with local models served by
+      #   Docker Model Runner.
+      # MODELS_EMPTY: |
+      #   No models yet. Pull one on the host, then press r.
+    volumes:
+      - ./config.example.yaml:/config/config.yaml:ro
+      # Directory mount, not a single file. Editors that replace the inode
+      # (vim, sed -i) keep working. Edit welcome/banner.txt and reconnect.
+      - ./welcome:/config/welcome:ro
+      - hostkeys:/data/hostkeys
+      # - ./authorized_keys:/keys/authorized_keys:ro
+    restart: unless-stopped
+
+volumes:
+  hostkeys:

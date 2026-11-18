@@ -1,0 +1,204 @@
+package uploads
+
+import (
+	"archive/zip"
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func testStore(t *testing.T, maxBytes int64, maxFiles int) *Store {
+	t.Helper()
+	return New(t.TempDir(), maxBytes, maxFiles)
+}
+
+func TestCleanNameRejectsTraversal(t *testing.T) {
+	cases := []string{"../etc/passwd", "..", ".", "/etc/passwd", `..\secret`, "", "   "}
+	for _, name := range cases {
+		if _, err := CleanName(name); err == nil {
+			t.Fatalf("accepted %q", name)
+		}
+	}
+	got, err := CleanName("dir/notes.md")
+	if err != nil || got != "notes.md" {
+		t.Fatalf("got %q err %v", got, err)
+	}
+}
+
+func TestPutCapsAndIsolation(t *testing.T) {
+	s := testStore(t, 32, 2)
+	if err := s.Put("user", "a.txt", []byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put("user", "too-big.txt", bytes.Repeat([]byte("x"), 33)); err == nil {
+		t.Fatal("expected size cap")
+	}
+	if err := s.Put("user", "b.txt", []byte("second")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put("user", "c.txt", []byte("third")); err == nil {
+		t.Fatal("expected file count cap")
+	}
+	if err := s.Put("other", "a.txt", []byte("theirs")); err != nil {
+		t.Fatal(err)
+	}
+	user := s.List("user")
+	if len(user) != 2 || user[0].Name != "a.txt" || !user[0].Included {
+		t.Fatalf("user %+v", user)
+	}
+	if s.List("other")[0].Text != "theirs" {
+		t.Fatal(s.List("other"))
+	}
+	body, err := s.Read("user", "a.txt")
+	if err != nil || string(body) != "hello" {
+		t.Fatalf("read %q %v", body, err)
+	}
+	if _, err := s.Read("user", "../a.txt"); err == nil {
+		t.Fatal("traversal read")
+	}
+}
+
+func TestReplaceKeepsIncludedFlag(t *testing.T) {
+	s := testStore(t, 1000, 5)
+	if err := s.Put("user", "a.txt", []byte("one")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetIncluded("user", "a.txt", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put("user", "a.txt", []byte("two")); err != nil {
+		t.Fatal(err)
+	}
+	files := s.List("user")
+	if len(files) != 1 || files[0].Included || files[0].Text != "two" {
+		t.Fatalf("%+v", files)
+	}
+}
+
+func TestSessionLeaveClearsOnlyThatUser(t *testing.T) {
+	s := testStore(t, 1000, 5)
+	s.SessionEnter("user")
+	s.SessionEnter("user")
+	s.SessionEnter("ada")
+	if err := s.Put("user", "a.txt", []byte("keep")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put("ada", "b.txt", []byte("ada")); err != nil {
+		t.Fatal(err)
+	}
+	s.SessionLeave("user")
+	if len(s.List("user")) != 1 {
+		t.Fatal("cleared while another user session is open")
+	}
+	s.SessionLeave("user")
+	if len(s.List("user")) != 0 {
+		t.Fatal("user files survived the last session")
+	}
+	if len(s.List("ada")) != 1 {
+		t.Fatal("ada files were cleared")
+	}
+}
+
+func TestContextBudgetTruncates(t *testing.T) {
+	s := testStore(t, 10_000, 5)
+	if err := s.Put("user", "a.txt", []byte(strings.Repeat("aaaa", 100))); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put("user", "b.txt", []byte(strings.Repeat("bbbb", 100))); err != nil {
+		t.Fatal(err)
+	}
+	text, truncated := s.Context("user", 40)
+	if !truncated {
+		t.Fatal("expected truncation")
+	}
+	if !strings.Contains(text, "----- a.txt") {
+		t.Fatalf("missing header: %s", text)
+	}
+	if strings.Contains(text, "----- b.txt") {
+		t.Fatalf("second file should not fit: %s", text)
+	}
+	if s.SetIncluded("user", "a.txt", false) != nil {
+		t.Fatal("toggle")
+	}
+	text, truncated = s.Context("user", 10_000)
+	if truncated || strings.Contains(text, "a.txt") || !strings.Contains(text, "b.txt") {
+		t.Fatalf("after toggle text=%q truncated=%v", text, truncated)
+	}
+}
+
+func TestDOCXAndBinary(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create("word/document.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = w.Write([]byte(`<w:document><w:t>Hello &amp; welcome</w:t><w:t>there</w:t></w:document>`))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	text, note := Extract("notes.docx", buf.Bytes())
+	if note != "" || !strings.Contains(text, "Hello & welcome") || !strings.Contains(text, "there") {
+		t.Fatalf("text %q note %q", text, note)
+	}
+	text, note = Extract("blob.bin", []byte{0, 1, 2, 3})
+	if text != "" || note == "" {
+		t.Fatalf("binary text %q note %q", text, note)
+	}
+}
+
+func TestBytesLandOnDiskAndClearRemovesThem(t *testing.T) {
+	s := testStore(t, 1000, 5)
+	if err := s.Put("user", "a.txt", []byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	path, err := s.FilePath("user", "a.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "hello" {
+		t.Fatalf("disk %q err %v", got, err)
+	}
+	if err := s.Put("user", "b.txt", []byte("bye")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Clear("user"); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.List("user")) != 0 {
+		t.Fatal("index not cleared")
+	}
+	if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {
+		t.Fatalf("user dir still present: %v", err)
+	}
+}
+
+func TestWipeOnStart(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir, 1000, 5)
+	if err := s.Put("user", "a.txt", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	again := New(dir, 1000, 5)
+	if len(again.List("user")) != 0 {
+		t.Fatal("wipe on start left files in the index")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("dir not empty: %v %v", entries, err)
+	}
+}
+
+func TestRemove(t *testing.T) {
+	s := testStore(t, 100, 3)
+	_ = s.Put("user", "a.txt", []byte("x"))
+	if err := s.Remove("user", "a.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.List("user")) != 0 {
+		t.Fatal(s.List("user"))
+	}
+}
