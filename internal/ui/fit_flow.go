@@ -351,7 +351,7 @@ func (m *Model) applyFit() (tea.Model, tea.Cmd) {
 	m.loadKind = loadWarm
 	m.screen = screenLoading
 	m.errText = ""
-	m.status = fmt.Sprintf("Loading %s · ctx %s · %s…", (dmr.Model{ID: f.model}).DisplayName(), ctxLabel(f.ctx()), t.Label())
+	m.status = fmt.Sprintf("Loading %s · ctx %s · %s…", (dmr.Model{ID: f.model}).DisplayName(), ctxLabel(f.ctx()), m.targetName(t))
 	ctx, gen := m.begin()
 	client, gate, gpus, learned := m.client, m.gate, m.gpu, m.learned
 	before := f.usedMiB
@@ -404,8 +404,12 @@ func (m *Model) onApply(msg applyMsg) (tea.Model, tea.Cmd) {
 	m.ctxSize = msg.ctx
 	m.target = msg.target
 	m.budget = budgetFor(msg.ctx, m.baseBudget)
-	note := fmt.Sprintf("Using %s · ctx %s · %s. This GPU is shared with every SSH session.",
-		(dmr.Model{ID: msg.model}).DisplayName(), ctxLabel(msg.ctx), msg.target.Label())
+	shared := "This GPU is shared with every SSH session."
+	if msg.target.Kind == fit.TargetCPU {
+		shared = "It runs from system RAM and is shared with every SSH session."
+	}
+	note := fmt.Sprintf("Using %s · ctx %s · %s. %s",
+		(dmr.Model{ID: msg.model}).DisplayName(), ctxLabel(msg.ctx), m.targetName(msg.target), shared)
 	return m.enterChat(msg.model, note)
 }
 

@@ -260,10 +260,11 @@ Before a model loads, the app estimates how much memory it needs and compares th
 
 Estimate:
 
-- Weights: the tensor data size from the GGUF header (all shards). A vision projector is added on the first GPU.
+- Weights: the tensor data size from the GGUF header (all shards). The token embedding table stays in system RAM (llama.cpp never offloads it), so it counts only for the CPU target. A vision projector is added on the first GPU.
 - KV cache: `2 × Σ layers (KV heads × head dim) × context × 2 bytes` (f16). Sliding-window layers (Gemma, gpt-oss) only keep the window plus one batch. Layers without attention (hybrid and recurrent models) keep none.
-- Compute buffer and a per-GPU runtime overhead of about 384 MiB.
-- Plus 5 % for error.
+- Recurrent state for hybrid models (linear-attention / SSM layers), from the `ssm.*` header keys, for each of DMR's 4 parallel slots.
+- Compute buffer and a per-GPU runtime overhead of about 256 MiB.
+- Plus 3 % for error. Measured against real loads, estimates land roughly 2–5 % above actual GPU usage.
 
 Placement:
 

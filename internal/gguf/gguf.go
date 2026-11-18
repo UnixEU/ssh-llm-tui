@@ -66,6 +66,49 @@ type Header struct {
 	DataOffset int64
 	// FileSize is the size of the file on disk.
 	FileSize int64
+	// Tensors lists tensor names and their offsets into the data section,
+	// in file order.
+	Tensors []Tensor
+}
+
+// Tensor is one entry of the tensor table.
+type Tensor struct {
+	Name string
+	// Offset is relative to DataOffset.
+	Offset uint64
+}
+
+// TensorBytes returns the stored size of the named tensor, derived from
+// the gap to the next tensor in the data section (the last one runs to
+// the end of the file). It needs FileSize for the last tensor and returns
+// false when the tensor is missing or the size cannot be told.
+func (h Header) TensorBytes(name string) (int64, bool) {
+	var start uint64
+	found := false
+	for _, t := range h.Tensors {
+		if t.Name == name {
+			start, found = t.Offset, true
+			break
+		}
+	}
+	if !found {
+		return 0, false
+	}
+	end := uint64(0)
+	haveEnd := false
+	for _, t := range h.Tensors {
+		if t.Offset > start && (!haveEnd || t.Offset < end) {
+			end, haveEnd = t.Offset, true
+		}
+	}
+	if !haveEnd {
+		size := h.DataSize()
+		if size <= 0 || uint64(size) <= start {
+			return 0, false
+		}
+		end = uint64(size)
+	}
+	return int64(end - start), true
 }
 
 // DataSize is the byte size of the tensor data section.
@@ -147,8 +190,9 @@ func Read(r io.Reader) (Header, error) {
 			h.Metadata[key] = v
 		}
 	}
+	h.Tensors = make([]Tensor, 0, h.TensorCount)
 	for i := uint64(0); i < h.TensorCount && d.err == nil; i++ {
-		d.str(maxKeyLen)
+		name := d.str(maxKeyLen)
 		dims := d.u32()
 		if dims > maxDims {
 			return Header{}, fmt.Errorf("gguf: tensor with %d dimensions", dims)
@@ -157,7 +201,10 @@ func Read(r io.Reader) (Header, error) {
 			d.u64()
 		}
 		d.u32() // type
-		d.u64() // offset
+		off := d.u64()
+		if d.err == nil {
+			h.Tensors = append(h.Tensors, Tensor{Name: name, Offset: off})
+		}
 	}
 	if d.err != nil {
 		return Header{}, fmt.Errorf("gguf: %w", d.err)

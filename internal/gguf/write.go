@@ -14,8 +14,8 @@ type KV struct {
 }
 
 // Write encodes a minimal GGUF v3 file: the metadata, one placeholder
-// tensor entry per name in tensors, alignment padding, and dataSize zero
-// bytes of tensor data. It exists for tests and fixtures; supported values
+// tensor entry per name in tensors (the data section is split evenly
+// between them), alignment padding, and dataSize zero bytes of tensor data. It exists for tests and fixtures; supported values
 // are string, bool, uint32, int32, uint64, float32, []int32, []bool and
 // []string.
 func Write(w io.Writer, kvs []KV, tensors []string, dataSize int64) error {
@@ -70,12 +70,16 @@ func Write(w io.Writer, kvs []KV, tensors []string, dataSize int64) error {
 			return fmt.Errorf("gguf write: unsupported value %T for %q", kv.Value, kv.Key)
 		}
 	}
-	for _, name := range tensors {
+	var share uint64
+	if len(tensors) > 0 && dataSize > 0 {
+		share = uint64(dataSize) / uint64(len(tensors))
+	}
+	for i, name := range tensors {
 		e.str(name)
 		e.u32(1)
 		e.u64(1)
 		e.u32(0)
-		e.u64(0)
+		e.u64(uint64(i) * share)
 	}
 	if rem := e.n % defaultAlign; rem != 0 {
 		e.write(make([]byte, defaultAlign-rem))

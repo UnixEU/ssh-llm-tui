@@ -104,3 +104,31 @@ func TestHugeLengthsAreRejected(t *testing.T) {
 		t.Fatal("huge key length accepted")
 	}
 }
+
+func TestTensorBytesFromOffsets(t *testing.T) {
+	var buf bytes.Buffer
+	names := []string{"token_embd.weight", "blk.0.attn_q.weight", "output.weight"}
+	if err := Write(&buf, []KV{{Key: "general.architecture", Value: "llama"}}, names, 3000); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Read(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.Tensors) != 3 || h.Tensors[2].Name != "output.weight" {
+		t.Fatalf("tensors %+v", h.Tensors)
+	}
+	// The last tensor needs the file size to be measured.
+	if _, ok := h.TensorBytes("output.weight"); ok {
+		t.Fatal("last tensor sized without a file size")
+	}
+	h.FileSize = int64(buf.Len())
+	for _, n := range names {
+		if got, ok := h.TensorBytes(n); !ok || got != 1000 {
+			t.Fatalf("%s: %d %v", n, got, ok)
+		}
+	}
+	if _, ok := h.TensorBytes("missing"); ok {
+		t.Fatal("missing tensor reported")
+	}
+}

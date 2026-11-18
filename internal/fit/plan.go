@@ -162,7 +162,7 @@ func Check(est Estimate, target Target, gpus []Device, ram Device, margins Margi
 			res.Reason = "system memory is unknown"
 			return res
 		}
-		need := est.Model()
+		need := est.Model() + est.HostWeights
 		res.Shares = []DeviceShare{share(ram, need, margins)}
 	case TargetGPU:
 		var dev *Device
@@ -191,7 +191,7 @@ func Check(est Estimate, target Target, gpus []Device, ram Device, margins Margi
 		if f <= 0 {
 			f = 1
 		}
-		split := int64(float64(est.Weights+est.KV) * f)
+		split := int64(float64(est.Weights+est.KV+est.State) * f)
 		perDevice := int64(float64(est.Compute)*f) + est.Overhead
 		proj := int64(float64(est.Projector) * f)
 		for i, g := range gpus {

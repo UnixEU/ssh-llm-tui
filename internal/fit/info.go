@@ -33,6 +33,13 @@ type ModelInfo struct {
 	SWA []bool
 	// WeightBytes is the tensor data of all weight shards.
 	WeightBytes int64
+	// InputEmbedBytes is the token embedding table (token_embd.weight),
+	// which llama.cpp keeps in system RAM even with every layer offloaded.
+	// Zero when unknown.
+	InputEmbedBytes int64
+	// StateBytes is the recurrent state per sequence of all linear-attention
+	// or SSM layers (hybrid models). Zero for pure transformers.
+	StateBytes int64
 	// ProjectorBytes is the multimodal projector, if any.
 	ProjectorBytes int64
 }
@@ -58,6 +65,9 @@ func FromHeaders(headers []gguf.Header) (ModelInfo, error) {
 			continue
 		}
 		info.WeightBytes += h.DataSize()
+		if n, ok := h.TensorBytes("token_embd.weight"); ok {
+			info.InputEmbedBytes += n
+		}
 		arch, _ := gguf.String(h.Metadata, "general.architecture")
 		if arch == "" {
 			continue
@@ -117,7 +127,35 @@ func FromHeaders(headers []gguf.Header) (ModelInfo, error) {
 	}
 	info.SlidingWindow = u("attention.sliding_window")
 	info.SWA = swaLayers(md, arch, info.Layers, info.SlidingWindow)
+	info.StateBytes = recurrentState(md, arch, info.HeadCountKV)
 	return info, nil
+}
+
+// recurrentState sizes the per-sequence state of the layers that keep no KV
+// cache, from the ssm.* keys, as llama.cpp does: a conv state of
+// (d_conv-1) * (d_inner + 2*groups*d_state) and a recurrent state of
+// d_state * d_inner, both f32, per layer.
+func recurrentState(md map[string]any, arch string, heads []int) int64 {
+	k := func(s string) int64 {
+		v, _ := gguf.Uint(md, arch+".ssm."+s)
+		return int64(v)
+	}
+	conv, inner, dstate, groups := k("conv_kernel"), k("inner_size"), k("state_size"), k("group_count")
+	if inner <= 0 || dstate <= 0 {
+		return 0
+	}
+	var convState int64
+	if conv > 1 {
+		convState = (conv - 1) * (inner + 2*groups*dstate)
+	}
+	perLayer := 4 * (convState + dstate*inner)
+	var layers int64
+	for _, h := range heads {
+		if h == 0 {
+			layers++
+		}
+	}
+	return perLayer * layers
 }
 
 func isProjector(md map[string]any) bool {

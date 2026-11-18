@@ -83,7 +83,7 @@ func (m *Model) viewContext() string {
 	if len(rows) == 0 {
 		rows = append(rows, m.theme.muted.Render("No context sizes configured."))
 	}
-	notes := []string{m.theme.muted.Render("Estimates for " + t.Label() + ". " + m.freeSummary(t))}
+	notes := []string{m.theme.muted.Render("Estimates for " + m.targetName(t) + ". " + m.freeSummary(t))}
 	if f.info.MaxContext() == 0 {
 		notes = append(notes, m.theme.muted.Render("The model's maximum context is unknown; all sizes are offered."))
 	}
@@ -97,6 +97,12 @@ func (m *Model) viewTarget() string {
 	f := m.fit
 	ctx := f.ctx()
 	rows := []string{}
+	freeWidth := 0
+	for _, t := range f.targets {
+		if w := len([]rune(m.freeSummary(t))); w > freeWidth {
+			freeWidth = w
+		}
+	}
 	for i, t := range f.targets {
 		res := m.checkAt(ctx, t)
 		marker := "  "
@@ -106,7 +112,7 @@ func (m *Model) viewTarget() string {
 			marker = m.theme.accent.Render("› ")
 			label = m.theme.accent.Render(name)
 		}
-		free := m.theme.muted.Render(fmt.Sprintf("%-26s", m.freeSummary(t)))
+		free := m.theme.muted.Render(fmt.Sprintf("%-*s", freeWidth, m.freeSummary(t)))
 		rows = append(rows, marker+label+"  "+free+"  "+m.verdictMark(res.Verdict))
 	}
 	notes := []string{m.theme.muted.Render("Context " + ctxLabel(ctx) + ". CPU runs from system RAM and is much slower than a GPU.")}
@@ -114,6 +120,9 @@ func (m *Model) viewTarget() string {
 }
 
 func (m *Model) targetName(t fit.Target) string {
+	if m.fit == nil {
+		return t.Label()
+	}
 	if t.Kind == fit.TargetGPU {
 		for _, g := range m.fit.gpus {
 			if g.Index == t.GPU && g.Name != "" {
@@ -191,7 +200,15 @@ func (m *Model) viewFit() string {
 		if e.Measured {
 			head += " (measured on an earlier load)"
 		} else {
-			parts := []string{"weights " + fit.FormatBytes(e.Weights), "KV " + fit.FormatBytes(e.KV), "compute " + fit.FormatBytes(e.Compute)}
+			weights := e.Weights
+			if t.Kind == fit.TargetCPU {
+				weights += e.HostWeights
+			}
+			parts := []string{"weights " + fit.FormatBytes(weights), "KV " + fit.FormatBytes(e.KV)}
+			if e.State > 0 {
+				parts = append(parts, "state "+fit.FormatBytes(e.State))
+			}
+			parts = append(parts, "compute "+fit.FormatBytes(e.Compute))
 			if e.Projector > 0 {
 				parts = append(parts, "vision "+fit.FormatBytes(e.Projector))
 			}

@@ -2,7 +2,7 @@
 
 ## 1.1.0
 
-- Memory check before a model loads. The app estimates the memory a model needs (weights, KV cache for the chosen context, compute buffers, runtime overhead, plus 5 %) and compares it with the memory free on each GPU, or in RAM for the CPU target. A model that does not fit is not loaded. The screen shows the numbers per device and offers the largest context that fits, the CPU, unloading idle models, or another model.
+- Memory check before a model loads. The app estimates the memory a model needs (weights, KV cache for the chosen context, recurrent state of hybrid models, compute buffers, runtime overhead, plus 3 %; token embeddings stay in RAM as llama.cpp keeps them there) and compares it with the memory free on each GPU, or in RAM for the CPU target. A model that does not fit is not loaded. The screen shows the numbers per device and offers the largest context that fits, the CPU, unloading idle models, or another model.
 - Multi-GPU aware: with several GPUs the check splits the model as llama.cpp does and requires every GPU to fit its share, not just the total.
 - Context size picker (8k, 16k, 32k, 64k, 128k by default, capped by the model's trained context). The file context budget follows the chosen size.
 - Target picker: all GPUs, a single GPU, or the CPU. Settings are sent through DMR's configure API (`POST /engines/_configure`, the same as `docker model configure`). A busy model (HTTP 409) gets a clear message instead of a failed load.

@@ -343,3 +343,80 @@ func TestFormat(t *testing.T) {
 }
 
 func kv(k string, v any) gguf.KV { return gguf.KV{Key: k, Value: v} }
+
+func TestInputEmbeddingsStayOnHost(t *testing.T) {
+	var buf bytes.Buffer
+	kvs := []gguf.KV{
+		kv("general.architecture", "llama"),
+		kv("llama.block_count", uint32(2)),
+		kv("llama.embedding_length", uint32(1024)),
+		kv("llama.attention.head_count", uint32(8)),
+		kv("llama.attention.head_count_kv", uint32(8)),
+	}
+	if err := gguf.Write(&buf, kvs, []string{"token_embd.weight", "blk.0.ffn_up.weight", "blk.1.ffn_up.weight", "output.weight"}, 4*mib); err != nil {
+		t.Fatal(err)
+	}
+	h, err := gguf.Read(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.FileSize = int64(buf.Len())
+	m, err := FromHeaders([]gguf.Header{h})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.WeightBytes != 4*mib || m.InputEmbedBytes != mib {
+		t.Fatalf("weights %d embed %d", m.WeightBytes, m.InputEmbedBytes)
+	}
+	e := EstimateFor(m, 4096, "f16")
+	if e.Weights != 3*mib || e.HostWeights != mib {
+		t.Fatalf("gpu weights %d host %d", e.Weights, e.HostWeights)
+	}
+	ram := Device{Index: -1, FreeBytes: 64 * gib, TotalBytes: 64 * gib}
+	gpus := []Device{{Index: 0, FreeBytes: 24 * gib, TotalBytes: 24 * gib}}
+	g := Check(e, Target{Kind: TargetGPU}, gpus, ram, Margins{})
+	c := Check(e, Target{Kind: TargetCPU}, gpus, ram, Margins{})
+	if c.Need()-(g.Need()-e.Overhead) != e.HostWeights {
+		t.Fatalf("cpu need %d gpu need %d: host weights must count only on CPU", c.Need(), g.Need())
+	}
+}
+
+// Hybrid geometry like recent Qwen releases: every fourth layer is full
+// attention, the rest are gated delta-net layers with a fixed state.
+func TestRecurrentStateForHybrid(t *testing.T) {
+	h := header(t, []gguf.KV{
+		kv("general.architecture", "qwen35"),
+		kv("qwen35.block_count", uint32(8)),
+		kv("qwen35.embedding_length", uint32(5120)),
+		kv("qwen35.attention.head_count", uint32(24)),
+		kv("qwen35.attention.head_count_kv", uint32(4)),
+		kv("qwen35.attention.key_length", uint32(256)),
+		kv("qwen35.attention.value_length", uint32(256)),
+		kv("qwen35.full_attention_interval", uint32(4)),
+		kv("qwen35.ssm.conv_kernel", uint32(4)),
+		kv("qwen35.ssm.inner_size", uint32(6144)),
+		kv("qwen35.ssm.state_size", uint32(128)),
+		kv("qwen35.ssm.group_count", uint32(16)),
+	}, gib)
+	m, err := FromHeaders([]gguf.Header{h})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// conv: 3*(6144+2*16*128) = 30720, state: 128*6144 = 786432, f32,
+	// on 6 of 8 layers.
+	want := int64(4 * (30720 + 786432) * 6)
+	if m.StateBytes != want {
+		t.Fatalf("state %d, want %d", m.StateBytes, want)
+	}
+	e := EstimateFor(m, 8192, "f16")
+	if e.State != want*DefaultParallel {
+		t.Fatalf("estimate state %d", e.State)
+	}
+	// KV: 2 attention layers * 4 heads * 512 * 2 bytes * 8192 tokens.
+	if e.KV != 2*4*512*2*8192 {
+		t.Fatalf("kv %d", e.KV)
+	}
+	if llama := EstimateFor(llama8B(t), 8192, "f16"); llama.State != 0 {
+		t.Fatalf("dense model with state %d", llama.State)
+	}
+}
