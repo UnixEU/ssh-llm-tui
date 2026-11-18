@@ -29,7 +29,6 @@ const (
 )
 
 var (
-	gpuBlue    = lipgloss.AdaptiveColor{Light: "19", Dark: "33"}
 	gpuGreen   = lipgloss.AdaptiveColor{Light: "22", Dark: "40"}
 	gpuYellow  = lipgloss.AdaptiveColor{Light: "136", Dark: "220"}
 	gpuOrange  = lipgloss.AdaptiveColor{Light: "166", Dark: "208"}
@@ -66,13 +65,13 @@ func heatColor(h heat) lipgloss.AdaptiveColor {
 func (m *Model) gpuThresholds() config.GPU {
 	g := m.cfg.GPU
 	if g.TempWarn <= 0 {
-		g.TempWarn, g.TempHot, g.TempCrit = 50, 60, 70
+		g.TempWarn, g.TempHot, g.TempCrit = 40, 60, 70
 	}
 	if g.PowerWarn <= 0 {
-		g.PowerWarn, g.PowerHot, g.PowerCrit = 50, 75, 150
+		g.PowerWarn, g.PowerHot, g.PowerCrit = 25, 100, 200
 	}
 	if g.MemWarn <= 0 {
-		g.MemWarn, g.MemHot, g.MemCrit = 25, 50, 75
+		g.MemWarn, g.MemHot, g.MemCrit = 40, 60, 90
 	}
 	return g
 }
@@ -203,7 +202,8 @@ func gpuColumn(r *lipgloss.Renderer, g gpuinfo.GPU, th config.GPU) string {
 		power = fmt.Sprintf("%.0fW", g.PowerW)
 		powerColour = heatColor(heatBand(g.PowerW, th.PowerWarn, th.PowerHot, th.PowerCrit))
 	}
-	nameStyle := r.NewStyle().Foreground(gpuBlue)
+	// The GPU name keeps the terminal's default text colour; only values are coloured.
+	nameStyle := r.NewStyle()
 	if g.AppsMiB > 0 {
 		nameStyle = nameStyle.Bold(true)
 	}
@@ -240,7 +240,7 @@ func gpuNameLine(g gpuinfo.GPU) string {
 }
 
 func compactGPULine(r *lipgloss.Renderer, g gpuinfo.GPU, th config.GPU) string {
-	name := r.NewStyle().Foreground(gpuBlue)
+	name := r.NewStyle()
 	if g.AppsMiB > 0 {
 		name = name.Bold(true)
 	}

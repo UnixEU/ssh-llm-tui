@@ -73,9 +73,6 @@ func TestHeatBandBoundaries(t *testing.T) {
 	if heatColor(heatCool).Dark == "" || heatColor(heatWarn).Dark == "" || heatColor(heatCrit).Dark == "" {
 		t.Fatal("missing heat colours")
 	}
-	if gpuBlue.Dark == "" {
-		t.Fatal("missing name colour")
-	}
 }
 
 func TestGPUPanelColumnsWrapAndCompact(t *testing.T) {

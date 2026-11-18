@@ -53,13 +53,13 @@ func TestLoadBakedInDefaults(t *testing.T) {
 	if cfg.GPU.Mode != "auto" || cfg.GPU.Interval.Duration() != 2*time.Second {
 		t.Fatalf("gpu %+v", cfg.GPU)
 	}
-	if cfg.GPU.TempWarn != 50 || cfg.GPU.TempHot != 60 || cfg.GPU.TempCrit != 70 {
+	if cfg.GPU.TempWarn != 40 || cfg.GPU.TempHot != 60 || cfg.GPU.TempCrit != 70 {
 		t.Fatalf("temp bands %+v", cfg.GPU)
 	}
-	if cfg.GPU.PowerWarn != 50 || cfg.GPU.PowerHot != 75 || cfg.GPU.PowerCrit != 150 {
+	if cfg.GPU.PowerWarn != 25 || cfg.GPU.PowerHot != 100 || cfg.GPU.PowerCrit != 200 {
 		t.Fatalf("power bands %+v", cfg.GPU)
 	}
-	if cfg.GPU.MemWarn != 25 || cfg.GPU.MemHot != 50 || cfg.GPU.MemCrit != 75 {
+	if cfg.GPU.MemWarn != 40 || cfg.GPU.MemHot != 60 || cfg.GPU.MemCrit != 90 {
 		t.Fatalf("mem bands %+v", cfg.GPU)
 	}
 	if cfg.Chat.Markdown != "on" || !cfg.MarkdownOn() {
