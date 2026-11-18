@@ -46,7 +46,7 @@ const (
 	pathUnload = "/engines/unload"
 
 	preloadHeader = "X-Preload-Only"
-	userAgent     = "ssh-llm-tui/1.0.0"
+	userAgent     = "ssh-llm-tui/1.0.1"
 )
 
 // Model is one pulled model, as listed by GET /engines/v1/models.

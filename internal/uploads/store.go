@@ -5,6 +5,7 @@ package uploads
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -156,6 +157,7 @@ func (s *Store) Put(user, name string, data []byte) error {
 	if img, ok, err := PrepareImage(clean, data, maxPx, maxImg); ok {
 		if err != nil {
 			note = "image: " + err.Error()
+			log.Printf("WARN upload user=%s op=put name=%q err=%v", user, clean, err)
 		} else {
 			prepared = img
 			isImage = true

@@ -434,7 +434,23 @@ func (m *Model) renderFileBox(focused bool) string {
 	for i := m.fileTop; i < end; i++ {
 		lines = append(lines, m.fileRow(files[i], i, len(files), rows))
 	}
+	if note := selectedFileNote(files, m.fileSel); note != "" {
+		lines = append(lines, m.clipWidth(m.theme.fileNote.Render("! "+note)))
+	}
 	return strings.Join(lines, "\n")
+}
+
+func selectedFileNote(files []uploads.File, name string) string {
+	if name == "" {
+		return ""
+	}
+	for _, f := range files {
+		if f.Name != name || f.Note == "" {
+			continue
+		}
+		return strings.Join(strings.Fields(f.Note), " ")
+	}
+	return ""
 }
 
 func fileSummary(files []uploads.File) string {

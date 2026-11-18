@@ -6,7 +6,7 @@
 services:
   ssh-llm-tui:
     build: .
-    image: ssh-llm-tui:1.0.0
+    image: ssh-llm-tui:1.0.1
     init: true
     read_only: true
     cap_drop:

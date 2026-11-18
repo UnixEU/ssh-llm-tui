@@ -3,6 +3,7 @@ package uploads
 import (
 	"archive/zip"
 	"bytes"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -189,6 +190,28 @@ func TestWipeOnStart(t *testing.T) {
 	entries, err := os.ReadDir(dir)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("dir not empty: %v %v", entries, err)
+	}
+}
+
+func TestPutImageDecodeErrorIsNotedAndLogged(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	s := testStore(t, 1<<20, 4)
+	broken := append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, []byte{0, 1, 2, 3}...)
+	if err := s.Put("user", "photo.png", broken); err != nil {
+		t.Fatal(err)
+	}
+	files := s.List("user")
+	if len(files) != 1 || files[0].IsImage || !strings.Contains(files[0].Note, "image:") {
+		t.Fatalf("%+v", files)
+	}
+	// Restore the logger before reading so a concurrent log cannot touch the buffer.
+	log.SetOutput(os.Stderr)
+	out := logs.String()
+	if !strings.Contains(out, "WARN upload") || !strings.Contains(out, files[0].Note[len("image: "):]) {
+		t.Fatalf("log %q note %q", out, files[0].Note)
 	}
 }
 

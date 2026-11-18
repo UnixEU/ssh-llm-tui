@@ -35,6 +35,7 @@ type theme struct {
 	modelLabel lipgloss.Style
 	bar        lipgloss.Style
 	files      lipgloss.Style
+	fileNote   lipgloss.Style
 }
 
 func newTheme(r *lipgloss.Renderer) theme {
@@ -80,7 +81,8 @@ func newTheme(r *lipgloss.Renderer) theme {
 		bar: r.NewStyle().
 			Foreground(gold).
 			Background(lipgloss.Color("236")),
-		files: r.NewStyle().Foreground(violet).Bold(true),
+		files:    r.NewStyle().Foreground(violet).Bold(true),
+		fileNote: r.NewStyle().Foreground(lipgloss.Color("208")).Faint(true),
 	}
 }
 

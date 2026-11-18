@@ -167,6 +167,51 @@ func TestFileSummaryScroll(t *testing.T) {
 	}
 }
 
+func TestFocusedFileBoxShowsNote(t *testing.T) {
+	files := uploads.New(t.TempDir(), 1<<20, 10)
+	broken := append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, []byte{0, 1, 2, 3}...)
+	if err := files.Put("user", "photo.png", broken); err != nil {
+		t.Fatal(err)
+	}
+	if err := files.Put("user", "data.bin", []byte{0, 1, 2, 3}); err != nil {
+		t.Fatal(err)
+	}
+	m := testModel(t)
+	m.files = files
+	m.user = "user"
+	m.screen = screenChat
+	m.width = 80
+	m.height = 24
+	collapsed := m.View()
+	if !strings.Contains(collapsed, "files: 2 (2 incl, 0 img) — ctrl+f") {
+		t.Fatalf("summary:\n%s", collapsed)
+	}
+	if strings.Contains(collapsed, "image:") || strings.Contains(collapsed, "not UTF-8") {
+		t.Fatalf("unfocused box should stay one summary line:\n%s", collapsed)
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	got := next.(*Model)
+	view := got.View()
+	if lipgloss.Height(view) != got.height {
+		t.Fatalf("height %d want %d\n%s", lipgloss.Height(view), got.height, view)
+	}
+	box := got.renderFileBox(true)
+	if !strings.Contains(box, "! not UTF-8 text") {
+		t.Fatalf("selected binary note missing:\n%s", box)
+	}
+	for _, line := range strings.Split(box, "\n") {
+		if lipgloss.Width(line) > got.width {
+			t.Fatalf("line width %d: %q", lipgloss.Width(line), line)
+		}
+	}
+	next, _ = got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	got = next.(*Model)
+	box = got.renderFileBox(true)
+	if !strings.Contains(box, "! image:") {
+		t.Fatalf("selected image note missing:\n%s", box)
+	}
+}
+
 func mustUIImage(t *testing.T) []byte {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, 20, 12))

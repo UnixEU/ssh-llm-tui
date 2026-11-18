@@ -27,6 +27,9 @@ func Middleware(store *uploads.Store) wish.Middleware {
 	return scp.Middleware(h, h)
 }
 
+// Write reads this file's SCP stream to completion. The protocol delivers
+// one file at a time on the session, so the buffer is not shared across
+// goroutines the way an SFTP WriteAt is.
 func (h SCPHandler) Write(s ssh.Session, entry *scp.FileEntry) (int64, error) {
 	name, _, err := uploadTarget(entry.Name)
 	if err != nil || name == "" {
