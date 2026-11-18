@@ -238,3 +238,77 @@ func TestExampleConfigMatchesBakedIn(t *testing.T) {
 		t.Fatalf("config.example.yaml drifted from internal/config/default.yaml")
 	}
 }
+
+func TestFitDefaults(t *testing.T) {
+	cfg, err := Load(LoadOptions{Getenv: envFrom(nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := cfg.Fit
+	if !cfg.FitOn() || cfg.FitStrict() || !cfg.ContextPicker() || !cfg.TargetPicker() || !cfg.CPUAllowed() {
+		t.Fatalf("fit switches %+v", f)
+	}
+	want := []int{8192, 16384, 32768, 65536, 131072}
+	if len(f.ContextChoices) != len(want) {
+		t.Fatalf("choices %v", f.ContextChoices)
+	}
+	for i := range want {
+		if f.ContextChoices[i] != want[i] {
+			t.Fatalf("choices %v", f.ContextChoices)
+		}
+	}
+	if f.DefaultContextTokens != 0 || f.MarginMiB != 1024 || f.MarginPct != 5 {
+		t.Fatalf("defaults %+v", f)
+	}
+	if f.UsagePath != "/data/fit/usage.json" || f.ModelStorePath != "" {
+		t.Fatalf("paths %+v", f)
+	}
+}
+
+func TestFitEnv(t *testing.T) {
+	cfg, err := Load(LoadOptions{Getenv: envFrom(map[string]string{
+		"FIT_CHECK":        "strict",
+		"FIT_MARGIN_MIB":   "2048",
+		"FIT_MARGIN_PCT":   "10",
+		"CONTEXT_CHOICES":  "32k, 4096,16K",
+		"DEFAULT_CONTEXT":  "16k",
+		"TARGET_SELECT":    "off",
+		"ALLOW_CPU":        "no",
+		"MODEL_STORE_PATH": "/dmr-models",
+		"KV_CACHE_TYPE":    "Q8_0",
+		"CPU_THREADS":      "12",
+		"FIT_USAGE_PATH":   "off",
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := cfg.Fit
+	if !cfg.FitStrict() || cfg.TargetPicker() || cfg.CPUAllowed() || !cfg.ContextPicker() {
+		t.Fatalf("switches %+v", f)
+	}
+	if f.MarginMiB != 2048 || f.MarginPct != 10 || f.DefaultContextTokens != 16384 || f.CPUThreads != 12 {
+		t.Fatalf("values %+v", f)
+	}
+	if len(f.ContextChoices) != 3 || f.ContextChoices[0] != 4096 || f.ContextChoices[2] != 32768 {
+		t.Fatalf("choices %v (want sorted)", f.ContextChoices)
+	}
+	if f.KVCacheType != "q8_0" || f.ModelStorePath != "/dmr-models" || f.UsagePath != "" {
+		t.Fatalf("strings %+v", f)
+	}
+}
+
+func TestFitEnvRejectsBadValues(t *testing.T) {
+	for k, v := range map[string]string{
+		"FIT_CHECK":       "maybe",
+		"CONTEXT_CHOICES": "8k,lots",
+		"DEFAULT_CONTEXT": "big",
+		"KV_CACHE_TYPE":   "q2",
+		"FIT_MARGIN_MIB":  "-1",
+		"FIT_MARGIN_PCT":  "75",
+		"CPU_THREADS":     "x",
+	} {
+		if _, err := Load(LoadOptions{Getenv: envFrom(map[string]string{k: v})}); err == nil {
+			t.Errorf("%s=%s accepted", k, v)
+		}
+	}
+}

@@ -13,10 +13,13 @@ import (
 
 	"github.com/UnixEU/ssh-llm-tui/internal/config"
 	"github.com/UnixEU/ssh-llm-tui/internal/dmr"
+	"github.com/UnixEU/ssh-llm-tui/internal/fit"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpu"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpuinfo"
+	"github.com/UnixEU/ssh-llm-tui/internal/modelstore"
 	"github.com/UnixEU/ssh-llm-tui/internal/session"
 	"github.com/UnixEU/ssh-llm-tui/internal/sshserver"
+	"github.com/UnixEU/ssh-llm-tui/internal/sysmem"
 	"github.com/UnixEU/ssh-llm-tui/internal/ui"
 	"github.com/UnixEU/ssh-llm-tui/internal/uploads"
 	tea "github.com/charmbracelet/bubbletea"
@@ -25,7 +28,7 @@ import (
 )
 
 // version is the release. The Docker build may override it with -X.
-var version = "1.0.2"
+var version = "1.1.0"
 
 const defaultConfigPath = "/config/config.yaml"
 
@@ -72,6 +75,7 @@ func run() error {
 	defer stop()
 	gpus := gpuinfo.NewPoller(cfg.GPU.Mode, cfg.GPU.SMIPath, cfg.GPU.Interval.Duration())
 	go gpus.Start(ctx)
+	resolver, learned := setupFit(logger, cfg)
 	srv, err := sshserver.New(cfg.Server, func(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 		model := ui.New(ui.Options{
 			Config:   cfg,
@@ -81,6 +85,9 @@ func run() error {
 			GPU:      gpus,
 			Unloader: tracker,
 			Budget:   cfg.Uploads.TokenBudget,
+			Resolver: resolver,
+			Learned:  learned,
+			ReadRAM:  sysmem.Read,
 			Renderer: bubbletea.MakeRenderer(sess),
 			User:     sess.User(),
 			Version:  version,
@@ -121,6 +128,22 @@ func run() error {
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}
+}
+
+// setupFit opens the optional read-only model store mount and the measured
+// usage file. Neither is required: without the store the check falls back
+// to measured usage and asks before loading a model of unknown size.
+func setupFit(logger *log.Logger, cfg config.Config) (*fit.Resolver, *fit.Learned) {
+	store, err := modelstore.Open(cfg.Fit.ModelStorePath)
+	switch {
+	case err != nil:
+		logger.Printf("warning: %v; model sizes come from measured usage only", err)
+	case store != nil:
+		logger.Printf("model store mounted at %s (read-only header reads)", store.Root())
+	case cfg.FitOn():
+		logger.Printf("MODEL_STORE_PATH is not set; the memory check uses measured usage and asks before loading unknown models")
+	}
+	return fit.NewResolver(store), fit.LoadLearned(cfg.Fit.UsagePath)
 }
 
 func loadConfig() (config.Config, error) {

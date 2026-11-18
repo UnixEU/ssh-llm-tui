@@ -95,3 +95,17 @@ func TestParseQueryEmpty(t *testing.T) {
 		t.Fatalf("%+v", snap)
 	}
 }
+
+func TestParseMemoryFree(t *testing.T) {
+	gpus := "0, Test GPU, GPU-a, 382, 16380, 35, 12.5, 15998\n1, Test GPU, GPU-b, 1000, 16380, 35, 12.5, [N/A]\n"
+	snap, err := ParseQuery(gpus, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.GPUs[0].MemFreeMiB != 15998 {
+		t.Fatalf("free %d", snap.GPUs[0].MemFreeMiB)
+	}
+	if snap.GPUs[1].MemFreeMiB != 15380 {
+		t.Fatalf("fallback free %d", snap.GPUs[1].MemFreeMiB)
+	}
+}

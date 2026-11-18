@@ -66,3 +66,33 @@ footer:
   change_model: ctrl+n change model
   exit: ctrl+q / esc exit
   scroll: pgup/pgdn scroll
+
+fit:
+  # Memory check before a model loads.
+  #   on:     a model that does not fit is refused; an unknown need asks first.
+  #   strict: an unknown need is refused too.
+  #   off:    no check (the pickers below still work).
+  check: "on"
+  # Headroom kept free on every GPU (and in RAM for the CPU target):
+  # max(margin_mib, margin_pct % of the device's total memory).
+  margin_mib: 1024
+  margin_pct: 5
+  # Context sizes offered when a model is chosen. Sizes above the model's
+  # trained context are hidden.
+  contexts: 8k,16k,32k,64k,128k
+  # Preselected context: auto (the largest that fits) or a size such as 16k.
+  default_context: auto
+  context_select: "on"
+  # Offer Auto (all GPUs), each single GPU and, with allow_cpu, the CPU.
+  target_select: "on"
+  allow_cpu: "on"
+  # Read-only mount of the Docker Model Runner model store. GGUF headers
+  # are read from it to size models exactly. Empty disables header reads.
+  model_store_path: ""
+  # Optional llama.cpp KV cache type: f16 (default), q8_0, q4_0, ...
+  kv_cache_type: ""
+  # llama.cpp threads for the CPU target. 0 keeps the llama.cpp default.
+  cpu_threads: 0
+  # GPU memory measured after each load, used when a header is unreadable.
+  # off keeps it in memory only.
+  usage_path: /data/fit/usage.json

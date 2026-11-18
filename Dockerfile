@@ -7,7 +7,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
-    -ldflags="-s -w -X main.version=1.0.2" \
+    -ldflags="-s -w -X main.version=1.1.0" \
     -o /out/ssh-llm-tui ./cmd/ssh-llm-tui
 
 # glibc, not Alpine. The NVIDIA container toolkit injects nvidia-smi and its
@@ -18,7 +18,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 65532 app \
     && useradd --uid 65532 --gid app --create-home --home-dir /home/app app \
-    && mkdir -p /data/hostkeys /config /tmp/uploads \
+    && mkdir -p /data/hostkeys /data/fit /config /tmp/uploads \
     && chown -R app:app /data /config /tmp/uploads
 COPY --from=build /out/ssh-llm-tui /usr/local/bin/ssh-llm-tui
 COPY config.example.yaml /config/config.yaml
