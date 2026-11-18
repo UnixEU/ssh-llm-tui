@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.0
+
+- Uploads keep directories. `scp -r folder user@host:uploads/` stores each file under its relative path (`/uploads/<user>/folder/sub/file`). Works with the default SFTP-based `scp` and with the legacy protocol (`scp -O -r`), including a target that does not exist yet. `scp -r` downloads return the tree.
+- SFTP: `mkdir`, listing any subdirectory, `stat`/`lstat` for files and directories, `rmdir` (whole tree), `rm` and `rename` of files and directories.
+- Path checks per component: no `..`, absolute paths, empty components or control characters, at most 16 levels and 1024 bytes, and nothing is written through a symlink.
+- New `UPLOAD_IGNORE` (default `.git,node_modules,.venv,__pycache__,.DS_Store`). Paths under those components are accepted, so a recursive upload of a Git checkout does not stop, and their data is discarded. One INFO log line per ignored directory.
+- Higher limits: `UPLOAD_MAX_FILES` default 1000 (was 10). New `UPLOAD_MAX_TOTAL_BYTES` per user, default 200 MiB. `UPLOAD_MAX_BYTES` stays 10 MiB per file. A file over a limit is refused on its own with a log line naming the limit; nothing half written is stored. The compose tmpfs for `/uploads` is 512 MiB.
+- New `UPLOAD_AUTO_INCLUDE` (default 20). New files are included automatically until that many are included or the token budget is reached; later files arrive excluded.
+- File box: directory rows with included/total counts and tokens, space toggles a whole directory, `d` removes a directory tree, `g`/`G` jump to the top or bottom, and the title and summary show included tokens against the budget.
+- The prompt labels files by relative path. Included files that do not fit the budget are named in a closing note. The attached-files list is capped at 100 names.
+- SFTP sessions send an exit status, so `scp` in SFTP mode exits 0 after a successful upload instead of 1.
+
 ## 1.1.1
 
 - `docker-compose.yml` sets fixed names: project `ssh-llm-tui`, container `ssh-llm-tui`, network `ssh-llm-tui-net`, volumes `ssh-llm-tui-hostkeys` and `ssh-llm-tui-fitdata`. They no longer depend on the checkout directory.

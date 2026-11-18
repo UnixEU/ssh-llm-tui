@@ -31,9 +31,11 @@ welcome:
   message: |
     Welcome. This session chats with local models on Docker Model Runner.
 
-    Upload a file from another terminal, then include it with ctrl+f:
+    Upload a file or a whole folder from another terminal, then pick
+    what goes into the prompt with ctrl+f:
 
       scp -P 2222 notes.txt user@host:uploads/
+      scp -P 2222 -r folder user@host:uploads/
 
     FileZilla and WinSCP can use the same port (SFTP).
   hint: Press any key to continue. ctrl+q exits.

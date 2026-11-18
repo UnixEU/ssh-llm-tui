@@ -187,7 +187,7 @@ func New(opts Options) *Model {
 		opts.User = "guest"
 	}
 	if strings.TrimSpace(opts.Version) == "" {
-		opts.Version = "1.1.1"
+		opts.Version = "1.2.0"
 	}
 	if opts.Budget <= 0 {
 		opts.Budget = uploads.DefaultBudget
@@ -444,6 +444,18 @@ func (m *Model) onChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d":
 		if m.filesFocus {
 			m.removeSelectedFile()
+			return m, nil
+		}
+		return m.passInput(msg)
+	case "home", "g":
+		if m.filesFocus {
+			m.jumpFile(-1)
+			return m, nil
+		}
+		return m.passInput(msg)
+	case "end", "G":
+		if m.filesFocus {
+			m.jumpFile(1)
 			return m, nil
 		}
 		return m.passInput(msg)
@@ -878,93 +890,6 @@ func (m *Model) onHome(msg homeMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) fileNames() []string {
-	if m.files == nil {
-		return nil
-	}
-	list := m.files.List(m.user)
-	names := make([]string, len(list))
-	for i, f := range list {
-		names[i] = f.Name
-	}
-	return names
-}
-
-func (m *Model) ensureFileSel() {
-	names := m.fileNames()
-	if len(names) == 0 {
-		m.fileSel = ""
-		return
-	}
-	for _, name := range names {
-		if name == m.fileSel {
-			return
-		}
-	}
-	m.fileSel = names[0]
-}
-
-func (m *Model) moveFile(delta int) {
-	names := m.fileNames()
-	if len(names) == 0 {
-		return
-	}
-	m.ensureFileSel()
-	i := 0
-	for n, name := range names {
-		if name == m.fileSel {
-			i = n
-			break
-		}
-	}
-	i += delta
-	if i < 0 {
-		i = 0
-	}
-	if i >= len(names) {
-		i = len(names) - 1
-	}
-	m.fileSel = names[i]
-	m.revealFile(i, len(names))
-}
-
-func (m *Model) pageFiles(dir int) {
-	names := m.fileNames()
-	if len(names) == 0 {
-		return
-	}
-	rows := m.filesBoxRows()
-	m.fileTop += dir * rows
-	maxTop := len(names) - rows
-	if maxTop < 0 {
-		maxTop = 0
-	}
-	if m.fileTop < 0 {
-		m.fileTop = 0
-	}
-	if m.fileTop > maxTop {
-		m.fileTop = maxTop
-	}
-	m.ensureFileSel()
-	i := 0
-	for n, name := range names {
-		if name == m.fileSel {
-			i = n
-			break
-		}
-	}
-	if i < m.fileTop || i >= m.fileTop+rows {
-		i = m.fileTop
-		if dir < 0 {
-			i = m.fileTop + rows - 1
-			if i >= len(names) {
-				i = len(names) - 1
-			}
-		}
-		m.fileSel = names[i]
-	}
-}
-
 func (m *Model) revealFile(index, n int) {
 	rows := m.filesBoxRows()
 	if index < m.fileTop {
@@ -987,26 +912,6 @@ func (m *Model) filesBoxRows() int {
 		return 4
 	}
 	return n
-}
-
-func (m *Model) toggleSelectedFile() {
-	if m.files == nil || m.fileSel == "" {
-		return
-	}
-	for _, f := range m.files.List(m.user) {
-		if f.Name == m.fileSel {
-			_ = m.files.SetIncluded(m.user, f.Name, !f.Included)
-			return
-		}
-	}
-}
-
-func (m *Model) removeSelectedFile() {
-	if m.files == nil || m.fileSel == "" {
-		return
-	}
-	_ = m.files.Remove(m.user, m.fileSel)
-	m.ensureFileSel()
 }
 
 func waitStream(gen int, ch <-chan dmr.StreamEvent) tea.Cmd {

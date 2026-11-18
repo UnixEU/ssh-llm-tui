@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/UnixEU/ssh-llm-tui/internal/dmr"
-	"github.com/UnixEU/ssh-llm-tui/internal/uploads"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -298,7 +297,7 @@ func (m *Model) helpLabels(short bool) []string {
 			if short {
 				return []string{"space", "d", "D clear", "j/k", "esc", "ctrl+q"}
 			}
-			return []string{"space include", "d remove", "D clear all", "j/k pgup", "esc/ctrl+f back", "ctrl+q exit"}
+			return []string{"space include (file/dir)", "d remove", "D clear all", "j/k pgup g/G", "esc/ctrl+f back", "ctrl+q exit"}
 		}
 		if short {
 			return []string{"enter", "ctrl+t", "ctrl+r", "ctrl+n", "ctrl+o", "ctrl+f", "pgup", "esc", "ctrl+q"}
@@ -427,112 +426,6 @@ func (m *Model) chatFileBox(maxH int) (string, int) {
 		return "", 0
 	}
 	return box, h
-}
-
-func (m *Model) renderFileBox(focused bool) string {
-	files := m.files.List(m.user)
-	if !focused {
-		return m.clipWidth(m.theme.muted.Render(fileSummary(files)))
-	}
-	rows := m.filesBoxRows()
-	if rows > len(files) {
-		rows = len(files)
-	}
-	if rows < 1 {
-		rows = 1
-	}
-	m.clampFileTop(len(files), rows)
-	title := m.fileTitle(len(files))
-	var lines []string
-	lines = append(lines, m.clipWidth(m.theme.files.Render(title)))
-	if len(files) == 0 {
-		lines = append(lines, m.clipWidth(m.theme.muted.Render("(none yet)")))
-		return strings.Join(lines, "\n")
-	}
-	end := m.fileTop + rows
-	if end > len(files) {
-		end = len(files)
-	}
-	for i := m.fileTop; i < end; i++ {
-		lines = append(lines, m.fileRow(files[i], i, len(files), rows))
-	}
-	if note := selectedFileNote(files, m.fileSel); note != "" {
-		lines = append(lines, m.clipWidth(m.theme.fileNote.Render("! "+note)))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func selectedFileNote(files []uploads.File, name string) string {
-	if name == "" {
-		return ""
-	}
-	for _, f := range files {
-		if f.Name != name || f.Note == "" {
-			continue
-		}
-		return strings.Join(strings.Fields(f.Note), " ")
-	}
-	return ""
-}
-
-func fileSummary(files []uploads.File) string {
-	incl, img := 0, 0
-	for _, f := range files {
-		if f.Included {
-			incl++
-		}
-		if f.IsImage {
-			img++
-		}
-	}
-	return fmt.Sprintf("files: %d (%d incl, %d img) — ctrl+f", len(files), incl, img)
-}
-
-func (m *Model) fileTitle(n int) string {
-	hint := "scp -P 2222 file user@host:uploads/"
-	extra := ""
-	if m.fileConfirm {
-		extra = "  clear all? y/n"
-	}
-	span := ""
-	if n > 0 {
-		rows := m.filesBoxRows()
-		if rows > n {
-			rows = n
-		}
-		span = fmt.Sprintf("  %d-%d/%d", m.fileTop+1, m.fileTop+rows, n)
-	}
-	return fitMiddle(m.width, "files  ", hint+span+extra, "")
-}
-
-func (m *Model) fileRow(f uploads.File, index, total, rows int) string {
-	cur := " "
-	if f.Name == m.fileSel {
-		cur = ">"
-	}
-	mark := "✗"
-	if f.Included {
-		mark = "✓"
-	}
-	left := cur + mark + " "
-	var info string
-	if f.IsImage {
-		info = fmt.Sprintf("img %dx%d  %s", f.Width, f.Height, humanSize(f.Size))
-		if f.Sent {
-			info += "  sent"
-		}
-	} else {
-		info = fmt.Sprintf("%s  ~%dt", humanSize(f.Size), f.Tokens)
-		if f.Note != "" {
-			info += " !"
-		}
-	}
-	right := "  " + info + " " + scrollGlyph(index, m.fileTop, rows, total)
-	line := fitMiddle(max(1, m.width), left, f.Name, right)
-	if strings.Contains(line, "\n") {
-		line = strings.ReplaceAll(line, "\n", "")
-	}
-	return m.clipWidth(line)
 }
 
 func (m *Model) clampFileTop(n, rows int) {

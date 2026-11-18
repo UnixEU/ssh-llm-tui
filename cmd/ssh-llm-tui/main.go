@@ -28,7 +28,7 @@ import (
 )
 
 // version is the release. The Docker build may override it with -X.
-var version = "1.1.1"
+var version = "1.2.0"
 
 const defaultConfigPath = "/config/config.yaml"
 
@@ -68,6 +68,9 @@ func run() error {
 	})
 	files := uploads.New(cfg.Uploads.Dir, cfg.Uploads.MaxBytes, cfg.Uploads.MaxFiles)
 	files.SetImageLimits(cfg.Uploads.ImageMaxPx, int(cfg.Uploads.ImageMaxBytes))
+	files.SetMaxTotalBytes(cfg.Uploads.MaxTotalBytes)
+	files.SetIgnore(uploads.ParseIgnore(cfg.Uploads.Ignore))
+	files.SetAutoInclude(cfg.Uploads.TokenBudget, cfg.Uploads.AutoInclude)
 	if err := os.MkdirAll(cfg.Uploads.Dir, 0o700); err != nil {
 		logger.Printf("warning: upload dir %s: %v (files stay in memory)", cfg.Uploads.Dir, err)
 	}

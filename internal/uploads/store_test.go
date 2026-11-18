@@ -15,16 +15,33 @@ func testStore(t *testing.T, maxBytes int64, maxFiles int) *Store {
 	return New(t.TempDir(), maxBytes, maxFiles)
 }
 
-func TestCleanNameRejectsTraversal(t *testing.T) {
-	cases := []string{"../etc/passwd", "..", ".", "/etc/passwd", `..\secret`, "", "   "}
-	for _, name := range cases {
-		if _, err := CleanName(name); err == nil {
-			t.Fatalf("accepted %q", name)
+func TestCleanPath(t *testing.T) {
+	bad := []string{
+		"../etc/passwd", "..", ".", "/etc/passwd", `..\secret`, "", "   ",
+		"a/../b", "a/./b", "a//b", "/a", "a/..", `a\..\..\b`,
+		"a/\x00/b", " /a", "a/ /b",
+		strings.Repeat("d/", MaxDepth) + "f",
+		strings.Repeat("x", MaxComponentLen+1),
+		strings.Repeat(strings.Repeat("y", 200)+"/", 6) + "z",
+	}
+	for _, name := range bad {
+		if got, err := CleanPath(name); err == nil {
+			t.Fatalf("accepted %q as %q", name, got)
 		}
 	}
-	got, err := CleanName("dir/notes.md")
-	if err != nil || got != "notes.md" {
-		t.Fatalf("got %q err %v", got, err)
+	good := map[string]string{
+		"notes.md":                     "notes.md",
+		"dir/notes.md":                 "dir/notes.md",
+		`dir\sub\notes.md`:             "dir/sub/notes.md",
+		"a/b/":                         "a/b",
+		"tab\tname.txt":                "tabname.txt",
+		strings.Repeat("d/", 15) + "f": strings.Repeat("d/", 15) + "f",
+	}
+	for in, want := range good {
+		got, err := CleanPath(in)
+		if err != nil || got != want {
+			t.Fatalf("%q -> %q %v, want %q", in, got, err, want)
+		}
 	}
 }
 

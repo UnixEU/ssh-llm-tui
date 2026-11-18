@@ -3,37 +3,53 @@ package transfer
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 )
 
 func TestUploadTarget(t *testing.T) {
-	dirCases := []string{"", ".", "/", "~", "~/", "uploads", "uploads/", "/uploads", "/uploads/"}
-	for _, c := range dirCases {
-		name, dir, err := uploadTarget(c)
-		if err != nil || !dir || name != "" {
-			t.Fatalf("%q -> name=%q dir=%v err=%v", c, name, dir, err)
+	rootCases := []string{"", ".", "/", "~", "~/", "uploads", "uploads/", "/uploads", "/uploads/", "./uploads/."}
+	for _, c := range rootCases {
+		rel, err := uploadTarget(c)
+		if err != nil || rel != "" {
+			t.Fatalf("%q -> rel=%q err=%v", c, rel, err)
 		}
 	}
-	fileCases := map[string]string{
-		"notes.txt":           "notes.txt",
-		"./notes.txt":         "notes.txt",
-		"/notes.txt":          "notes.txt",
-		"uploads/notes.txt":   "notes.txt",
-		"/uploads/notes.txt":  "notes.txt",
-		"~/notes.txt":         "notes.txt",
-		"uploads/./notes.txt": "notes.txt",
+	cases := map[string]string{
+		"notes.txt":                  "notes.txt",
+		"./notes.txt":                "notes.txt",
+		"/notes.txt":                 "notes.txt",
+		"uploads/notes.txt":          "notes.txt",
+		"/uploads/notes.txt":         "notes.txt",
+		"~/notes.txt":                "notes.txt",
+		"uploads/./notes.txt":        "notes.txt",
+		"uploads/sub/file.txt":       "sub/file.txt",
+		"/uploads/a/b/c/d.json":      "a/b/c/d.json",
+		"docs//guide.md":             "docs/guide.md",
+		`win\style\path.txt`:         "win/style/path.txt",
+		"/uploads/uploads/inner.txt": "uploads/inner.txt",
+		"dir/":                       "dir",
 	}
-	for in, want := range fileCases {
-		name, dir, err := uploadTarget(in)
-		if err != nil || dir || name != want {
-			t.Fatalf("%q -> name=%q dir=%v err=%v", in, name, dir, err)
+	for in, want := range cases {
+		rel, err := uploadTarget(in)
+		if err != nil || rel != want {
+			t.Fatalf("%q -> rel=%q err=%v want %q", in, rel, err, want)
 		}
 	}
-	denied := []string{"../etc/passwd", "/etc/passwd", "uploads/sub/file.txt", "foo/bar", "/uploads/../etc/passwd"}
+	denied := []string{
+		"../etc/passwd",
+		"/uploads/../etc/passwd",
+		"uploads/a/../../b",
+		`..\secret`,
+		"a/../../../x",
+		strings.Repeat("d/", 17) + "f",
+		strings.Repeat("x", 256),
+	}
 	for _, c := range denied {
-		_, _, err := uploadTarget(c)
-		if !errors.Is(err, os.ErrPermission) && err == nil {
-			t.Fatalf("%q err=%v, want permission or invalid", c, err)
+		if rel, err := uploadTarget(c); err == nil {
+			t.Fatalf("%q accepted as %q", c, rel)
+		} else if !errors.Is(err, os.ErrPermission) && !strings.Contains(err.Error(), "invalid path") {
+			t.Fatalf("%q err=%v", c, err)
 		}
 	}
 }

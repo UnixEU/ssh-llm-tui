@@ -173,3 +173,47 @@ func startHandlerClient(t *testing.T, store *uploads.Store) *sftp.Client {
 	t.Cleanup(func() { _ = client.Close() })
 	return client
 }
+
+func TestPutAtOversizeStoresNothing(t *testing.T) {
+	store := uploads.New(t.TempDir(), 64<<10, 4)
+	h := sftpHandler{store: store, user: "user"}
+	w, err := h.Filewrite(sftp.NewRequest("Put", "/uploads/dir/big.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunk := make([]byte, 32<<10)
+	if _, err := w.WriteAt(chunk, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.WriteAt(chunk, 32<<10); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.WriteAt(chunk, 64<<10); err == nil {
+		t.Fatal("write past the per-file limit was accepted")
+	}
+	if err := w.(io.Closer).Close(); err == nil {
+		t.Fatal("close after a refused chunk should fail")
+	}
+	if files, _ := store.Usage("user"); files != 0 {
+		t.Fatalf("partial file stored: %v", store.List("user"))
+	}
+}
+
+func TestIgnoredWriteIsDiscarded(t *testing.T) {
+	store := uploads.New(t.TempDir(), 1<<10, 4)
+	h := sftpHandler{store: store, user: "user"}
+	w, err := h.Filewrite(sftp.NewRequest("Put", "/uploads/repo/.git/objects/pack/big.pack"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Larger than the per-file limit: ignored data is never buffered.
+	if _, err := w.WriteAt(make([]byte, 8<<10), 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.(io.Closer).Close(); err != nil {
+		t.Fatal(err)
+	}
+	if files, n := store.Usage("user"); files != 0 || n != 0 {
+		t.Fatal(files, n)
+	}
+}
