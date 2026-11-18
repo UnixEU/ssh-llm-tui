@@ -8,7 +8,30 @@ The container talks to DMR only over HTTP. It does not mount the Docker socket a
 
 ## Screenshots
 
-Terminal screenshots can go here.
+Click a thumbnail to open the full-size image.
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <a href="docs/screenshots/01-welcome.png"><img src="docs/screenshots/01-welcome-thumb.png" alt="Welcome screen" width="400"></a><br>
+      <sub><b>1. Welcome screen.</b> The banner comes from a mounted <code>welcome/banner.txt</code>. The GPU panel in the top right shows VRAM, temperature and power draw.</sub>
+    </td>
+    <td align="center" width="50%">
+      <a href="docs/screenshots/02-model-picker.png"><img src="docs/screenshots/02-model-picker-thumb.png" alt="Model picker" width="400"></a><br>
+      <sub><b>2. Model picker.</b> Lists the models already pulled in Docker Model Runner. Going back to this screen unloads the previous model.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <a href="docs/screenshots/03-chat-vision.png"><img src="docs/screenshots/03-chat-vision-thumb.png" alt="Chat with images" width="400"></a><br>
+      <sub><b>3. Chat with images.</b> Seven screenshots uploaded over SCP and described by a vision model, with Markdown rendering and the reasoning collapsed.</sub>
+    </td>
+    <td align="center" width="50%">
+      <a href="docs/screenshots/04-chat-reasoning.png"><img src="docs/screenshots/04-chat-reasoning-thumb.png" alt="Chat with reasoning expanded" width="400"></a><br>
+      <sub><b>4. Reasoning expanded.</b> <code>Ctrl+T</code> shows the model's thinking above the final answer.</sub>
+    </td>
+  </tr>
+</table>
 
 ## Requirements
 
