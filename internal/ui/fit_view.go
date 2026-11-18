@@ -253,7 +253,7 @@ func (m *Model) viewFit() string {
 	if f.errText != "" {
 		lines = append(lines, "", m.theme.err.Render(f.errText))
 	}
-	if n := m.loadedNote(); n != "" && !f.sameConfig {
+	if n := m.loadedNote(); n != "" && !f.sameConfig && !(f.busy && f.errText != "") {
 		lines = append(lines, "", n)
 	}
 	req := m.configureRequest()
