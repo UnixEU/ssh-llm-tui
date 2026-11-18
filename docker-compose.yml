@@ -4,10 +4,15 @@
 # DMR itself is already running on the host (container docker-model-runner).
 # This file does not start a second model runner.
 
+# Fixed names, so the container, network and volumes do not depend on the
+# checkout directory name.
+name: ssh-llm-tui
+
 services:
   ssh-llm-tui:
     build: .
-    image: ssh-llm-tui:1.1.0
+    image: ssh-llm-tui:1.1.1
+    container_name: ssh-llm-tui
     init: true
     read_only: true
     cap_drop:
@@ -113,11 +118,19 @@ services:
       # Needs the external volume below; see README "Memory check".
       - dmr-models:/dmr-models:ro
       # - ./authorized_keys:/keys/authorized_keys:ro
+    networks:
+      - ssh-llm-tui-net
     restart: unless-stopped
+
+networks:
+  ssh-llm-tui-net:
+    name: ssh-llm-tui-net
 
 volumes:
   hostkeys:
+    name: ssh-llm-tui-hostkeys
   fitdata:
+    name: ssh-llm-tui-fitdata
   # Created by Docker Model Runner on Docker Engine. Check the name with
   # `docker volume ls`. Remove this entry together with the mount above if
   # it does not exist on your host.

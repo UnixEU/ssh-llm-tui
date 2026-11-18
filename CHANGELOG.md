@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1
+
+- `docker-compose.yml` sets fixed names: project `ssh-llm-tui`, container `ssh-llm-tui`, network `ssh-llm-tui-net`, volumes `ssh-llm-tui-hostkeys` and `ssh-llm-tui-fitdata`. They no longer depend on the checkout directory.
+- Upgrading from an earlier compose file creates new volumes. The server host key is generated again, so SSH clients warn once about a changed host key; remove the old entry from `known_hosts`. Measured GPU usage starts empty. The old `<project>_hostkeys`, `<project>_fitdata` volumes and `<project>_default` network can be removed afterwards.
+
 ## 1.1.0
 
 - Memory check before a model loads. The app estimates the memory a model needs (weights, KV cache for the chosen context, recurrent state of hybrid models, compute buffers, runtime overhead, plus 3 %; token embeddings stay in RAM as llama.cpp keeps them there) and compares it with the memory free on each GPU, or in RAM for the CPU target. A model that does not fit is not loaded. The screen shows the numbers per device and offers the largest context that fits, the CPU, unloading idle models, or another model.

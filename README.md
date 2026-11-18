@@ -2,7 +2,7 @@
 
 SSH terminal chat for local models served by [Docker Model Runner](https://docs.docker.com/ai/model-runner/) (DMR). Connect with `ssh -p 2222 user@host` and you get this app instead of a shell.
 
-Version 1.0.2. The interface is a terminal UI, built with Go and the Charm stack (Wish, Bubble Tea, Lip Gloss, Bubbles). Released under the MIT license. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
+Version 1.1.1. The interface is a terminal UI, built with Go and the Charm stack (Wish, Bubble Tea, Lip Gloss, Bubbles). Released under the MIT license. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
 
 The container talks to DMR only over HTTP. It does not mount the Docker socket and it does not call the `docker` CLI, so it cannot pull models or start containers.
 
@@ -180,7 +180,7 @@ extra_hosts:
 
 For key auth, set `AUTH_MODE=keys`, mount an `authorized_keys` file, and set `AUTHORIZED_KEYS_PATH`. Any username is still accepted. The key has to be in that file. Do not commit the file.
 
-The server host key is written to the `hostkeys` volume (`/data/hostkeys/ssh_host_ed25519_key`) so clients do not see a host-key change on every restart. The process runs as uid 65532. A new named volume picks up that ownership from the image. A bind mount must be writable by uid 65532:
+The server host key is written to the `ssh-llm-tui-hostkeys` volume (`/data/hostkeys/ssh_host_ed25519_key`) so clients do not see a host-key change on every restart. The process runs as uid 65532. A new named volume picks up that ownership from the image. A bind mount must be writable by uid 65532:
 
 ```bash
 mkdir -p data/hostkeys
@@ -346,7 +346,7 @@ A model list entry looks like `docker.io/ai/gpt-oss:20b` with an empty `dmr` obj
 go test ./...
 go vet ./...
 go test -race ./...
-docker build -t ssh-llm-tui:1.1.0 .
+docker build -t ssh-llm-tui:1.1.1 .
 ```
 
 Go 1.24 or newer. The module downloads a newer toolchain if the system Go is older.
