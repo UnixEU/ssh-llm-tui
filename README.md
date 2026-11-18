@@ -2,7 +2,7 @@
 
 SSH terminal chat for local models served by [Docker Model Runner](https://docs.docker.com/ai/model-runner/) (DMR). Connect with `ssh -p 2222 user@host` and you get this app instead of a shell.
 
-Version 1.2.0. The interface is a terminal UI, built with Go and the Charm stack (Wish, Bubble Tea, Lip Gloss, Bubbles). Released under the MIT license. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
+Version 1.3.0. The interface is a terminal UI, built with Go and the Charm stack (Wish, Bubble Tea, Lip Gloss, Bubbles). Released under the MIT license. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
 
 The container talks to DMR only over HTTP. It does not mount the Docker socket and it does not call the `docker` CLI, so it cannot pull models or start containers.
 
@@ -96,6 +96,7 @@ A help bar sits on the last row of every screen. It wraps or shortens on a narro
 | `ctrl+r` | chat | switch assistant replies between rendered Markdown and raw text |
 | `ctrl+n` | chat | unload runners and pick another model, even if other sessions are connected |
 | `ctrl+f` | chat | focus the file box. `j`/`k` and pgup/pgdn scroll it, space includes, `d` deletes one, `D` clears all after y/n, `esc` leaves the box |
+| `ctrl+e` | chat | open the review screen for file changes the model proposed. See Edits and downloads |
 | `ctrl+c` | chat | cancel the reply in progress. It does not exit |
 | `pgup` / `pgdn`, `ctrl+u` / `ctrl+d` | chat | scroll |
 | `ctrl+q` | every screen | unload if this is the last session, then close SSH |
@@ -134,6 +135,16 @@ The window can be resized. Finished assistant replies are rendered again at the 
 | `UPLOAD_MAX_TOTAL_BYTES` | `209715200` | total size of all files per username (200 MiB) |
 | `UPLOAD_IGNORE` | `.git,node_modules,.venv,__pycache__,.DS_Store` | comma-separated path component names. Anything at or under such a component is accepted and discarded. `none` turns it off |
 | `UPLOAD_AUTO_INCLUDE` | `20` | how many new files are included in the prompt automatically, within `CONTEXT_TOKEN_BUDGET` |
+| `EDIT_MODE` | `on` | `on`: while files are uploaded, the model is told how to propose changes and replies are scanned for them. `m` on the review screen toggles it per session. `off` turns the feature off |
+| `EDIT_PROTOCOL` | `blocks` | how edits are exchanged. `blocks` (SEARCH/REPLACE, WHOLE, DELETE blocks in the reply) is the only one so far |
+| `EDIT_MAX_FILES` | `20` | files one reply may change |
+| `EDIT_ALLOW_NEW` | `true` | the model may create new files |
+| `EDIT_ALLOW_DELETE` | `false` | the model may propose deleting files |
+| `DOWNLOAD_DIR` | `/downloads` | on-disk root for exports, `/downloads/<user>/` |
+| `DOWNLOAD_MAX_TOTAL_BYTES` | `209715200` | total size of one user's downloads (200 MiB) |
+| `DOWNLOAD_ARCHIVE` | `tar.gz` | archive format of `t`. Only `tar.gz` |
+| `PUBLIC_HOST` | empty | host name clients use to reach the server. Only used to print exact download commands; `host` when empty |
+| `PUBLIC_PORT` | `SSH_PORT` | port clients use, for the same commands |
 | `CONTEXT_TOKEN_BUDGET` | `8192` | rough byte/4 cap for included text. Once a context size is chosen, the cap is three quarters of it |
 | `IMAGE_MAX_PX` | `1536` | longest side after downscale |
 | `IMAGE_MAX_BYTES` | `2097152` | encoded image payload cap |
@@ -206,7 +217,7 @@ scp -P 2222 -r folder user@host:uploads/
 sftp -P 2222 user@host
 ```
 
-`host:` (the remote root), `host:uploads/` and `host:/uploads` are the same per-user directory. Nothing outside that directory is writable.
+`host:uploads/` and `host:/uploads` are the per-user upload directory. Uploading to the remote root (`host:`) lands there too, as before. Listing the root shows two folders, `uploads/` and `downloads/` (see Edits and downloads). `downloads/` is read-only for clients, apart from deleting. Nothing else is writable. Because of that, a top-level folder can no longer be named `downloads` when uploading to the root; upload to `host:uploads/` instead.
 
 Directories are kept. `scp -r folder user@host:uploads/` stores every file under its relative path, for example `folder/src/main.go`, on disk as `/uploads/<user>/folder/src/main.go`. As with any scp server, a target that does not exist yet (`host:uploads/newname`) becomes the top directory. Both modes work: the default SFTP-based `scp` of current OpenSSH, and the legacy protocol with `scp -O -r`. Over SFTP you can `mkdir`, `ls` any subdirectory, `rename`, `rm` and `rmdir` (which removes the whole tree). Downloads work too: `scp -P 2222 -r user@host:uploads/folder .`.
 
@@ -231,6 +242,73 @@ DMR's model list does not say whether a model can see images. This app still tri
 llama.cpp accepts images when that model was loaded with an mmproj (a vision projector). `docker model inspect <model>` is the check: look for an mmproj file, a vision projector, or a VL / vision tag. A text quant such as `ai/qwen3.8:27b-q4_K_M` needs that projector in the model card. `ai/gpt-oss:20b` is a text model. vLLM vision models use the same `/engines/v1` path when DMR routes them there.
 
 Bytes are stored under `UPLOAD_DIR` (default `/uploads/<user>/`), which compose mounts as a tmpfs (512 MiB, only what is stored uses RAM). The directory is emptied when the process starts and when that user's last TUI session ends. Open the TUI first, upload, and work with the files in that session.
+
+## Edits and downloads
+
+With files uploaded, the model can propose changes to them. You review each change in the TUI, then download the result with `scp` or `sftp`. Your uploads are never modified: accepted versions live in a per-session workspace, and the next prompt sends those versions instead of the originals.
+
+Edit mode is on by default while files are uploaded (`EDIT_MODE`). The system prompt then explains the block format below, and every finished reply is scanned for blocks. Only the visible reply is read, never the reasoning. The chat header shows `EDIT`, and `EDIT · N to review` when changes wait for review.
+
+```
+FILE: src/main.go
+<<<<<<< SEARCH
+	fmt.Println("hi")
+=======
+	fmt.Println("hello")
+>>>>>>> REPLACE
+
+FILE: docs/NOTES.md
+<<<<<<< WHOLE
+# Notes
+>>>>>>> WHOLE
+
+FILE: old.txt
+<<<<<<< DELETE
+>>>>>>> DELETE
+```
+
+- `SEARCH`/`REPLACE` changes part of a file. Several blocks may follow one `FILE:` line. The search text is matched exactly first, then ignoring trailing whitespace, then ignoring indentation (the replacement is re-indented to match). A block that matches nowhere, or more than once, is refused with the reason and the nearest lines.
+- `WHOLE` creates a file (`EDIT_ALLOW_NEW`) or rewrites one. A rewrite is refused unless the model was shown that file in full, not cut by the token budget.
+- `DELETE` is refused unless `EDIT_ALLOW_DELETE=true`.
+- Blocks may sit inside code fences. Paths go through the same checks as uploads. Only text files are edited; images, PDF and DOCX are refused. A changed file must stay under `UPLOAD_MAX_BYTES`, and a reply may change at most `EDIT_MAX_FILES` files.
+
+After a reply, a note in the chat sums up the proposal, for example `Proposed changes to 2 files (1 new); 1 block could not be applied`. `ctrl+e` opens the review screen:
+
+| Key | Action |
+| --- | --- |
+| ↑/↓, `j`/`k`, `g`/`G` | select a file |
+| enter | show the coloured diff. `j`/`k`, pgup/pgdn scroll, `n`/`p` next and previous file, `esc` back to the list |
+| `a` / `r` | accept or reject the selected change |
+| `A` / `R` | accept or reject all pending changes |
+| `u` | undo the last accepted change of the file (it goes back to pending) |
+| `v` | revert the file to the uploaded original |
+| `f` | send the refused blocks back to the model with the reasons, so it can try again |
+| `x` | export the changed and new files plus `changes.patch` to `downloads/` |
+| `t` | export the whole uploaded folder with all accepted changes merged, as one `.tar.gz` |
+| `m` | turn edit mode off or on for this session |
+| `esc`, `ctrl+e` | back to the chat |
+
+A newer proposal for a file replaces an older one that is still pending. Accepting a change that was built on an older version of the file is refused; ask again.
+
+Exports land in `/downloads/<user>/`:
+
+- `files/` holds the changed and new files under their upload paths, for example `files/project/src/main.go`.
+- `changes.patch` is a git-style unified diff of all accepted changes. When everything was uploaded as one folder, paths are relative to that folder, so apply it inside your checkout.
+- `t` writes `<folder>.tar.gz` (or `uploads.tar.gz` when the uploads are not a single folder).
+
+The review screen prints the exact commands. Set `PUBLIC_HOST` (and `PUBLIC_PORT` when clients use another port) so they are ready to paste; otherwise they say `host`.
+
+```bash
+scp -P 2222 -r user@host:downloads/files .
+scp -P 2222 user@host:downloads/changes.patch . && git apply changes.patch
+scp -P 2222 user@host:downloads/project.tar.gz . && tar xzf project.tar.gz
+scp -P 2222 -O -r user@host:downloads .        # legacy scp protocol
+sftp -P 2222 user@host                          # then: get -r downloads
+```
+
+Clients can read and delete in `downloads/`, but not write, create directories or rename. Downloads are wiped exactly like uploads: when the process starts and when that user's last TUI session ends, so download before you close the TUI. The edit workspace lives in memory and ends with it. `DOWNLOAD_MAX_TOTAL_BYTES` caps one user's exports; compose mounts `/downloads` as a 512 MiB tmpfs.
+
+Small models follow the format less reliably, and larger edits need context: raise `CONTEXT_TOKEN_BUDGET` and pick a larger context size so the model sees whole files. Tool calling is not used yet; DMR vision models often lack it, and the text blocks work with any chat model. `EDIT_PROTOCOL` is there to add it later.
 
 ## GPU panel
 
@@ -345,12 +423,15 @@ A model list entry looks like `docker.io/ai/gpt-oss:20b` with an empty `dmr` obj
 - Chat text is sent only to DMR. The server log records connections and model ids, not message bodies.
 - The image runs as non-root (uid 65532), read-only, with all capabilities dropped and `no-new-privileges`.
 - Do not commit host keys or `authorized_keys`.
+- Model-proposed edits never touch the uploaded files and are never run. They are applied only after review, and only to text files inside the user's upload paths.
 
 ## Limitations
 
 - Unload skips runners that are mid-request. `ctrl+n` cannot free the GPU out from under another session's in-flight reply.
 - Cancelling a warm (by leaving the session) aborts the HTTP wait. DMR may still finish loading the runner it already started.
 - Concurrent chats share whatever is currently loaded.
+- Edits are exchanged as text blocks, not tool calls. A model that does not follow the format produces no proposal. `WHOLE` rewrites need the file shown in full, so a file cut by the token budget can only get `SEARCH`/`REPLACE` edits.
+- Edits and exports belong to the TUI session. Several TUI sessions with the same username share one workspace and one `downloads/` folder.
 - The app does not pull or delete models. It configures context size and placement per model, but it does not reinstall the runner (`docker model reinstall-runner --gpu`). Switching the whole runner between CUDA and CPU images needs the Docker API, so it stays a host task.
 - GPU indexes in the target picker follow `nvidia-smi`. llama.cpp names devices in CUDA order (`CUDA0`, `CUDA1`). On hosts with different GPU models the two orders can differ unless DMR runs with `CUDA_DEVICE_ORDER=PCI_BUS_ID`.
 
@@ -360,7 +441,7 @@ A model list entry looks like `docker.io/ai/gpt-oss:20b` with an empty `dmr` obj
 go test ./...
 go vet ./...
 go test -race ./...
-docker build -t ssh-llm-tui:1.2.0 .
+docker build -t ssh-llm-tui:1.3.0 .
 ```
 
 Go 1.24 or newer. The module downloads a newer toolchain if the system Go is older.

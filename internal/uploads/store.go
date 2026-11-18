@@ -841,9 +841,14 @@ func describe(files []File) string {
 		if n > describeMax {
 			continue
 		}
-		if f.IsImage {
+		switch {
+		case f.IsImage:
 			fmt.Fprintf(&b, "- %s (image %dx%d)\n", f.Name, f.Width, f.Height)
-		} else {
+		case f.Note == noteEdited:
+			fmt.Fprintf(&b, "- %s (edited in this session)\n", f.Name)
+		case f.Note == noteNew:
+			fmt.Fprintf(&b, "- %s (new in this session)\n", f.Name)
+		default:
 			fmt.Fprintf(&b, "- %s\n", f.Name)
 		}
 	}
@@ -853,25 +858,65 @@ func describe(files []File) string {
 	return b.String()
 }
 
+// Overlay supplies edited versions of uploaded files. Version returns the
+// accepted text of name; ok is false when the upload is used as it is and
+// exists is false when the file was deleted. Added lists new files.
+type Overlay interface {
+	Version(name string) (text string, exists, ok bool)
+	Added() []string
+}
+
+const (
+	noteEdited = "edited in this session"
+	noteNew    = "new in this session"
+)
+
+// ContextResult is the prompt fragment for included files.
+type ContextResult struct {
+	Text string
+	// Truncated is true when anything was dropped or cut.
+	Truncated bool
+	// Full holds the files whose complete text is in Text.
+	Full map[string]bool
+}
+
 // Context builds the prompt fragment for included files, truncated so the
 // estimated token count stays within budget. Files that do not fit are
 // named in a closing note. The bool is true when anything was dropped or cut.
 func (s *Store) Context(user string, budget int) (string, bool) {
+	r := s.ContextWith(user, budget, nil)
+	return r.Text, r.Truncated
+}
+
+// ContextWith is Context with edited versions laid over the uploads.
+// Edited files replace their upload, deleted files are left out and new
+// files are added as included text files.
+func (s *Store) ContextWith(user string, budget int, ov Overlay) ContextResult {
 	if budget <= 0 {
 		budget = DefaultBudget
 	}
 	files := s.List(user)
+	if ov != nil {
+		files = overlayFiles(files, ov)
+	}
+	res := ContextResult{Full: map[string]bool{}}
 	var b strings.Builder
 	if desc := describe(files); desc != "" {
 		b.WriteString(desc)
 		b.WriteByte('\n')
 	}
 	used := 0
-	truncated := false
 	full := false
 	var omitted []string
 	for _, f := range files {
-		if !f.Included || strings.TrimSpace(f.Text) == "" {
+		if !f.Included {
+			continue
+		}
+		if strings.TrimSpace(f.Text) == "" {
+			if f.Text == "" && f.Note == "" && !f.IsImage {
+				// An empty text file is seen in full.
+				res.Full[f.Name] = true
+			}
 			continue
 		}
 		if full {
@@ -883,16 +928,21 @@ func (s *Store) Context(user string, budget int) (string, bool) {
 		remain := budget - used - ht
 		body := f.Text
 		if remain <= 0 {
-			truncated = true
+			res.Truncated = true
 			full = true
 			omitted = append(omitted, f.Name)
 			continue
 		}
+		cut := false
 		if EstimateTokens(body) > remain {
 			body = truncateRunes(body, remain*4)
 			body += "\n[truncated to the context token budget]\n"
-			truncated = true
+			res.Truncated = true
 			full = true
+			cut = true
+		}
+		if !cut {
+			res.Full[f.Name] = true
 		}
 		b.WriteString(header)
 		b.WriteString(body)
@@ -912,7 +962,84 @@ func (s *Store) Context(user string, budget int) (string, bool) {
 		}
 		b.WriteString("]\n")
 	}
-	return b.String(), truncated
+	res.Text = b.String()
+	return res
+}
+
+// overlayFiles applies edited versions to a snapshot sorted by name.
+func overlayFiles(files []File, ov Overlay) []File {
+	out := make([]File, 0, len(files))
+	for _, f := range files {
+		text, exists, ok := ov.Version(f.Name)
+		if !ok {
+			out = append(out, f)
+			continue
+		}
+		if !exists {
+			continue
+		}
+		f.Text = text
+		f.Size = int64(len(text))
+		f.Tokens = EstimateTokens(text)
+		f.Note = noteEdited
+		out = append(out, f)
+	}
+	for _, name := range ov.Added() {
+		text, exists, ok := ov.Version(name)
+		if !ok || !exists {
+			continue
+		}
+		out = append(out, File{Name: name, Size: int64(len(text)), Included: true, Text: text, Tokens: EstimateTokens(text), Note: noteNew})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// UserView is one user's uploads as the edit engine sees them.
+type UserView struct {
+	store *Store
+	user  string
+}
+
+// View returns the read-only view of user's uploads used by edits.
+func (s *Store) View(user string) UserView { return UserView{store: s, user: user} }
+
+// Original returns the uploaded bytes of name and whether the model can
+// edit it. Only plain UTF-8 text is editable: the model sees PDF and DOCX
+// files as extracted text, not as their source.
+func (v UserView) Original(name string) ([]byte, bool, bool, string) {
+	clean, err := CleanPath(name)
+	if err != nil {
+		return nil, false, false, err.Error()
+	}
+	v.store.mu.Lock()
+	defer v.store.mu.Unlock()
+	f := v.store.box(v.user).find(clean)
+	if f == nil {
+		return nil, false, false, ""
+	}
+	data := append([]byte(nil), f.data...)
+	switch ext := strings.ToLower(path.Ext(clean)); {
+	case f.IsImage:
+		return data, true, false, "image"
+	case ext == ".pdf" || ext == ".docx":
+		return data, true, false, "the model only sees the extracted text of " + ext + " files"
+	case !looksText(data):
+		return data, true, false, "binary file"
+	}
+	return data, true, true, ""
+}
+
+// IsDir reports whether name is an uploaded directory.
+func (v UserView) IsDir(name string) bool {
+	st, err := v.store.Stat(v.user, name)
+	return err == nil && st.IsDir
+}
+
+// Ignored reports whether name has an ignored component.
+func (v UserView) Ignored(name string) bool {
+	_, ok := v.store.Ignored(name)
+	return ok
 }
 
 // IncludedTokens is the sum of token estimates for included files that have text.

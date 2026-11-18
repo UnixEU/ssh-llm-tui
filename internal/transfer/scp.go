@@ -8,10 +8,12 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"os"
 	"path"
 	"strings"
 	"time"
 
+	"github.com/UnixEU/ssh-llm-tui/internal/downloads"
 	"github.com/UnixEU/ssh-llm-tui/internal/uploads"
 	"github.com/charmbracelet/ssh"
 	"github.com/charmbracelet/wish"
@@ -23,13 +25,22 @@ import (
 // directories).
 type SCPHandler struct {
 	Store *uploads.Store
+	// Downloads is served read-only under downloads/. Nil hides it.
+	Downloads *downloads.Store
 }
 
 // Middleware is the wish middleware. Non-scp sessions fall through.
 func Middleware(store *uploads.Store) wish.Middleware {
-	h := SCPHandler{Store: store}
+	return MiddlewareWith(store, nil)
+}
+
+// MiddlewareWith also serves downloads/ for scp -f.
+func MiddlewareWith(store *uploads.Store, dl *downloads.Store) wish.Middleware {
+	h := SCPHandler{Store: store, Downloads: dl}
 	return scp.Middleware(h, h)
 }
+
+func (h SCPHandler) fs() vfs { return vfs{up: h.Store, dl: h.Downloads} }
 
 // target resolves where an incoming file goes. entry.Filepath is the scp
 // target joined with the directories the client opened and the file name.
@@ -59,6 +70,11 @@ func (h SCPHandler) target(s ssh.Session, entry *scp.FileEntry) (string, error) 
 // one file at a time on the session, so the buffer is not shared across
 // goroutines the way an SFTP WriteAt is.
 func (h SCPHandler) Write(s ssh.Session, entry *scp.FileEntry) (int64, error) {
+	if inDownloads(entry.Filepath) {
+		err := denyDownloads()
+		log.Printf("WARN scp user=%s op=write name=%q err=%v", s.User(), entry.Filepath, err)
+		return 0, err
+	}
 	name, err := h.target(s, entry)
 	if err != nil {
 		log.Printf("WARN scp user=%s op=write name=%q err=%v", s.User(), entry.Filepath, err)
@@ -117,6 +133,11 @@ func remapped(s ssh.Session, rel string) string {
 // a regular scp server, "scp -r dir host:uploads/new" creates "new" with
 // the contents of dir when "new" does not exist, and "new/dir" when it does.
 func (h SCPHandler) Mkdir(s ssh.Session, entry *scp.DirEntry) error {
+	if inDownloads(entry.Filepath) {
+		err := denyDownloads()
+		log.Printf("WARN scp user=%s op=mkdir name=%q err=%v", s.User(), entry.Filepath, err)
+		return err
+	}
 	rel, err := uploadTarget(entry.Filepath)
 	if err == nil && rel == "" {
 		return nil
@@ -146,35 +167,49 @@ func (h SCPHandler) Mkdir(s ssh.Session, entry *scp.DirEntry) error {
 	return nil
 }
 
-// Glob resolves the path of scp -f into store paths. The root and a
-// trailing wildcard expand to the matching children of that directory.
-// Without -r only files are returned. Matches come in reverse name order,
-// see WalkDir.
+// Glob resolves the path of scp -f into virtual paths (uploads/...,
+// downloads/...). The root and a trailing wildcard expand to the matching
+// children of that directory. Without -r only files are returned. Matches
+// come in reverse name order, see WalkDir.
 func (h SCPHandler) Glob(s ssh.Session, pattern string) ([]string, error) {
 	recursive := scp.GetInfo(s.Command()).Recursive
 	user := s.User()
-	dir, match := "", "*"
-	if rel, err := uploadTarget(pattern); err != nil {
+	v := h.fs()
+	a, rel, err := resolve(pattern)
+	if err != nil {
 		return nil, err
-	} else if rel != "" {
+	}
+	dir := vpath(a, rel)
+	match := "*"
+	if a == areaDownloads && rel == "" {
+		// downloads/ is a folder of its own, copied as one like any
+		// directory. The uploads root keeps listing its children, as in
+		// earlier versions.
+		if !recursive {
+			return nil, fmt.Errorf("%s: is a directory, use scp -r", downloadsName)
+		}
+		return []string{downloadsName}, nil
+	}
+	if a != areaRoot && rel != "" {
 		base := path.Base(rel)
 		if strings.ContainsAny(base, "*?[") {
-			dir, match = path.Dir(rel), base
-			if dir == "." {
-				dir = ""
+			match = base
+			dir = vpath(a, path.Dir(rel))
+			if path.Dir(rel) == "." {
+				dir = vpath(a, "")
 			}
 		} else {
-			st, err := h.Store.Stat(user, rel)
+			st, err := v.stat(user, pattern)
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", rel, err)
 			}
 			if st.IsDir && !recursive {
 				return nil, fmt.Errorf("%s: is a directory, use scp -r", rel)
 			}
-			return []string{rel}, nil
+			return []string{st.Path}, nil
 		}
 	}
-	entries, err := h.Store.ReadDir(user, dir)
+	entries, err := v.readDir(user, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +233,8 @@ func (h SCPHandler) Glob(s ssh.Session, pattern string) ([]string, error) {
 // path is a string prefix of the entry's parent, so "ab/x" would land in
 // "a" if "a" came first.
 func (h SCPHandler) WalkDir(s ssh.Session, p string, fn fs.WalkDirFunc) error {
-	st, err := h.Store.Stat(s.User(), p)
+	v := h.fs()
+	st, err := v.stat(s.User(), p)
 	if err != nil {
 		return fn(p, nil, err)
 	}
@@ -208,7 +244,7 @@ func (h SCPHandler) WalkDir(s ssh.Session, p string, fn fs.WalkDirFunc) error {
 	if err := fn(p, dirDirEntry(path.Base(p)), nil); err != nil {
 		return err
 	}
-	entries, err := h.Store.ReadDir(s.User(), p)
+	entries, err := v.readDir(s.User(), p)
 	if err != nil {
 		return err
 	}
@@ -225,18 +261,45 @@ func (h SCPHandler) NewDirEntry(_ ssh.Session, p string) (*scp.DirEntry, error) 
 }
 
 func (h SCPHandler) NewFileEntry(s ssh.Session, p string) (*scp.FileEntry, func() error, error) {
-	rel, err := uploadTarget(p)
+	a, rel, err := resolve(p)
 	if err != nil {
 		return nil, nil, err
+	}
+	now := time.Now().Unix()
+	if a == areaDownloads {
+		if h.Downloads == nil || rel == "" {
+			return nil, nil, fs.ErrNotExist
+		}
+		st, err := h.Downloads.Stat(s.User(), rel)
+		if err == nil && st.IsDir {
+			err = errIsDir
+		}
+		if err != nil {
+			log.Printf("WARN scp user=%s op=read name=%q err=%v", s.User(), p, err)
+			return nil, nil, err
+		}
+		log.Printf("INFO scp user=%s op=read name=%q bytes=%d", s.User(), vpath(a, rel), st.Size)
+		lf := &lazyFile{store: h.Downloads, user: s.User(), rel: rel}
+		return &scp.FileEntry{
+			Name:     path.Base(rel),
+			Filepath: p,
+			Mode:     0o644,
+			Size:     st.Size,
+			Reader:   lf,
+			Mtime:    now,
+			Atime:    now,
+		}, lf.Close, nil
+	}
+	if rel == "" {
+		return nil, nil, errIsDir
 	}
 	data, err := h.Store.Read(s.User(), rel)
 	if err != nil {
 		return nil, nil, err
 	}
-	now := time.Now().Unix()
 	return &scp.FileEntry{
 		Name:     path.Base(rel),
-		Filepath: rel,
+		Filepath: p,
 		Mode:     0o644,
 		Size:     int64(len(data)),
 		Reader:   bytes.NewReader(data),
@@ -258,3 +321,41 @@ func (d dirDirEntry) Name() string               { return string(d) }
 func (d dirDirEntry) IsDir() bool                { return true }
 func (d dirDirEntry) Type() fs.FileMode          { return fs.ModeDir }
 func (d dirDirEntry) Info() (fs.FileInfo, error) { return sftpInfo{name: string(d), dir: true}, nil }
+
+// lazyFile opens a download when the encoder first reads it and closes it
+// at EOF, so a large tree does not hold one descriptor per file.
+type lazyFile struct {
+	store *downloads.Store
+	user  string
+	rel   string
+	f     *os.File
+	done  bool
+}
+
+func (l *lazyFile) Read(p []byte) (int, error) {
+	if l.done {
+		return 0, io.EOF
+	}
+	if l.f == nil {
+		f, _, err := l.store.Open(l.user, l.rel)
+		if err != nil {
+			return 0, err
+		}
+		l.f = f
+	}
+	n, err := l.f.Read(p)
+	if err == io.EOF {
+		l.done = true
+		_ = l.Close()
+	}
+	return n, err
+}
+
+func (l *lazyFile) Close() error {
+	if l.f == nil {
+		return nil
+	}
+	err := l.f.Close()
+	l.f = nil
+	return err
+}

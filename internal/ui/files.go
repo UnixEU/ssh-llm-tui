@@ -323,7 +323,11 @@ func shortCount(n int) string {
 }
 
 func (m *Model) fileTitle(n int, files []uploads.File) string {
-	hint := "scp -P 2222 -r dir user@host:uploads/"
+	p, _, target := m.sshTarget()
+	hint := "scp " + p + "-r dir " + target + ":uploads/"
+	if m.edits != nil && len(m.workspace().Changed()) > 0 {
+		hint = "● edited (ctrl+e)  " + hint
+	}
 	extra := ""
 	if m.fileConfirm {
 		extra = "  clear all? y/n"
@@ -378,6 +382,9 @@ func (m *Model) fileRow(it fileItem, index, total, rows int) string {
 			info = fmt.Sprintf("%s  ~%dt", humanSize(f.Size), f.Tokens)
 			if f.Note != "" {
 				info += " !"
+			}
+			if m.edits != nil && m.workspace().Modified(f.Name) {
+				info += " ●"
 			}
 		}
 	}

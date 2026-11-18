@@ -13,6 +13,8 @@ import (
 
 	"github.com/UnixEU/ssh-llm-tui/internal/config"
 	"github.com/UnixEU/ssh-llm-tui/internal/dmr"
+	"github.com/UnixEU/ssh-llm-tui/internal/downloads"
+	"github.com/UnixEU/ssh-llm-tui/internal/edits"
 	"github.com/UnixEU/ssh-llm-tui/internal/fit"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpu"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpuinfo"
@@ -28,7 +30,7 @@ import (
 )
 
 // version is the release. The Docker build may override it with -X.
-var version = "1.2.0"
+var version = "1.3.0"
 
 const defaultConfigPath = "/config/config.yaml"
 
@@ -74,33 +76,40 @@ func run() error {
 	if err := os.MkdirAll(cfg.Uploads.Dir, 0o700); err != nil {
 		logger.Printf("warning: upload dir %s: %v (files stay in memory)", cfg.Uploads.Dir, err)
 	}
+	dl := downloads.New(cfg.Downloads.Dir, cfg.Downloads.MaxTotalBytes)
+	if _, err := os.Stat(cfg.Downloads.Dir); err != nil {
+		logger.Printf("warning: download dir %s: %v (exports will fail)", cfg.Downloads.Dir, err)
+	}
+	workspaces := edits.NewManager()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	gpus := gpuinfo.NewPoller(cfg.GPU.Mode, cfg.GPU.SMIPath, cfg.GPU.Interval.Duration())
 	go gpus.Start(ctx)
 	resolver, learned := setupFit(logger, cfg)
-	srv, err := sshserver.New(cfg.Server, func(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
+	srv, err := sshserver.NewWith(cfg.Server, func(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 		model := ui.New(ui.Options{
-			Config:   cfg,
-			Client:   client,
-			Gate:     gate,
-			Files:    files,
-			GPU:      gpus,
-			Unloader: tracker,
-			Budget:   cfg.Uploads.TokenBudget,
-			Resolver: resolver,
-			Learned:  learned,
-			ReadRAM:  sysmem.Read,
-			Renderer: bubbletea.MakeRenderer(sess),
-			User:     sess.User(),
-			Version:  version,
-			Session:  sess.Context(),
+			Config:    cfg,
+			Client:    client,
+			Gate:      gate,
+			Files:     files,
+			Downloads: dl,
+			Edits:     workspaces,
+			GPU:       gpus,
+			Unloader:  tracker,
+			Budget:    cfg.Uploads.TokenBudget,
+			Resolver:  resolver,
+			Learned:   learned,
+			ReadRAM:   sysmem.Read,
+			Renderer:  bubbletea.MakeRenderer(sess),
+			User:      sess.User(),
+			Version:   version,
+			Session:   sess.Context(),
 		})
 		return model, []tea.ProgramOption{
 			tea.WithAltScreen(),
 			tea.WithoutSignalHandler(),
 		}
-	}, tracker, files)
+	}, tracker, sshserver.Stores{Uploads: files, Downloads: dl, Extra: []sshserver.UserSessions{workspaces}})
 	if err != nil {
 		return err
 	}

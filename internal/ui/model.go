@@ -8,6 +8,8 @@ import (
 
 	"github.com/UnixEU/ssh-llm-tui/internal/config"
 	"github.com/UnixEU/ssh-llm-tui/internal/dmr"
+	"github.com/UnixEU/ssh-llm-tui/internal/downloads"
+	"github.com/UnixEU/ssh-llm-tui/internal/edits"
 	"github.com/UnixEU/ssh-llm-tui/internal/fit"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpu"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpuinfo"
@@ -33,6 +35,7 @@ const (
 	screenContext
 	screenTarget
 	screenFit
+	screenChanges
 )
 
 type loadKind int
@@ -74,6 +77,10 @@ type Options struct {
 	Version  string
 	Session  context.Context
 	Files    *uploads.Store
+	// Downloads receives exported changes. Nil disables export.
+	Downloads *downloads.Store
+	// Edits holds the per-user edited versions. Nil disables edit mode.
+	Edits    *edits.Manager
 	GPU      *gpuinfo.Poller
 	Unloader SoleUnloader
 	Budget   int
@@ -87,17 +94,20 @@ type Options struct {
 
 // Model is the bubbletea application for one SSH session.
 type Model struct {
-	cfg      config.Config
-	client   *dmr.Client
-	gate     *gpu.Gate
-	theme    theme
-	user     string
-	version  string
-	session  context.Context
-	files    *uploads.Store
-	gpu      *gpuinfo.Poller
-	unloader SoleUnloader
-	budget   int
+	cfg       config.Config
+	client    *dmr.Client
+	gate      *gpu.Gate
+	theme     theme
+	user      string
+	version   string
+	session   context.Context
+	files     *uploads.Store
+	downloads *downloads.Store
+	edits     *edits.Manager
+	protocol  edits.Protocol
+	gpu       *gpuinfo.Poller
+	unloader  SoleUnloader
+	budget    int
 	// baseBudget is CONTEXT_TOKEN_BUDGET, used until a context is chosen.
 	baseBudget int
 	resolver   *fit.Resolver
@@ -140,6 +150,17 @@ type Model struct {
 	mdByWidth     map[int]*glamour.TermRenderer
 	status        string
 	errText       string
+
+	// Edit review state.
+	editOn    bool
+	seen      map[string]bool
+	chPath    string
+	chDiff    bool
+	chTop     int
+	chNote    string
+	exporting bool
+	exported  bool
+	archive   string
 
 	gen    int
 	cancel context.CancelFunc
@@ -187,7 +208,7 @@ func New(opts Options) *Model {
 		opts.User = "guest"
 	}
 	if strings.TrimSpace(opts.Version) == "" {
-		opts.Version = "1.2.0"
+		opts.Version = "1.3.0"
 	}
 	if opts.Budget <= 0 {
 		opts.Budget = uploads.DefaultBudget
@@ -223,20 +244,24 @@ func New(opts Options) *Model {
 	vp := viewport.New(80, 16)
 
 	return &Model{
-		cfg:      opts.Config,
-		client:   opts.Client,
-		gate:     opts.Gate,
-		theme:    th,
-		user:     opts.User,
-		version:  opts.Version,
-		session:  opts.Session,
-		files:    opts.Files,
-		gpu:      opts.GPU,
-		unloader: opts.Unloader,
-		budget:   opts.Budget,
-		resolver: opts.Resolver,
-		learned:  opts.Learned,
-		readRAM:  opts.ReadRAM,
+		cfg:       opts.Config,
+		client:    opts.Client,
+		gate:      opts.Gate,
+		theme:     th,
+		user:      opts.User,
+		version:   opts.Version,
+		session:   opts.Session,
+		files:     opts.Files,
+		downloads: opts.Downloads,
+		edits:     opts.Edits,
+		protocol:  edits.Blocks{},
+		editOn:    opts.Config.EditOn(),
+		gpu:       opts.GPU,
+		unloader:  opts.Unloader,
+		budget:    opts.Budget,
+		resolver:  opts.Resolver,
+		learned:   opts.Learned,
+		readRAM:   opts.ReadRAM,
 
 		baseBudget: opts.Budget,
 		markdown:   opts.Config.MarkdownOn(),
@@ -299,6 +324,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onApply(msg)
 	case freedMsg:
 		return m.onFreed(msg)
+	case exportMsg:
+		return m.onExport(msg)
 	default:
 		return m, nil
 	}
@@ -333,6 +360,8 @@ func (m *Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.onTargetKey(msg)
 	case screenFit:
 		return m.onFitKey(msg)
+	case screenChanges:
+		return m.onChangesKey(msg)
 	default:
 		return m, nil
 	}
@@ -392,6 +421,8 @@ func (m *Model) onChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+t":
 		m.toggleThinking()
 		return m, nil
+	case "ctrl+e":
+		return m.openChanges()
 	case "ctrl+r":
 		m.markdown = !m.markdown
 		m.syncTranscript(m.viewport.AtBottom())
@@ -411,6 +442,9 @@ func (m *Model) onChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.filesFocus && m.fileConfirm {
 			if m.files != nil {
 				_ = m.files.Clear(m.user)
+			}
+			if m.edits != nil {
+				m.edits.Clear(m.user)
 			}
 			m.fileConfirm = false
 			m.fileSel = ""
@@ -728,11 +762,17 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 
 func (m *Model) apiMessages() []dmr.Message {
 	out := make([]dmr.Message, 0, len(m.turns)+1)
-	if strings.TrimSpace(m.cfg.Chat.SystemPrompt) != "" {
-		out = append(out, dmr.Message{Role: "system", Content: m.cfg.Chat.SystemPrompt})
+	if sys := m.systemPrompt(); sys != "" {
+		out = append(out, dmr.Message{Role: "system", Content: sys})
 	}
 	if m.files != nil {
-		if text, _ := m.files.Context(m.user, m.budget); strings.TrimSpace(text) != "" {
+		var ov uploads.Overlay
+		if m.edits != nil {
+			ov = m.workspace()
+		}
+		res := m.files.ContextWith(m.user, m.budget, ov)
+		m.seen = res.Full
+		if text := res.Text; strings.TrimSpace(text) != "" {
 			out = append(out, dmr.Message{
 				Role:    "user",
 				Content: "Files uploaded into this session. Use them as context.\n\n" + text,
@@ -933,6 +973,9 @@ func (m *Model) finishStream(err error) {
 	} else if err == nil && m.files != nil && len(m.pendingImages) > 0 {
 		m.files.MarkSent(m.user, m.pendingImages)
 		m.pendingImages = nil
+	}
+	if err == nil {
+		m.proposeEdits()
 	}
 	m.syncTranscript(true)
 }

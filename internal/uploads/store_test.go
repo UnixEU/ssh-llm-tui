@@ -242,3 +242,63 @@ func TestRemove(t *testing.T) {
 		t.Fatal(s.List("user"))
 	}
 }
+
+type testOverlay struct {
+	versions map[string]string
+	deleted  map[string]bool
+	added    []string
+}
+
+func (o testOverlay) Version(name string) (string, bool, bool) {
+	if o.deleted[name] {
+		return "", false, true
+	}
+	v, ok := o.versions[name]
+	return v, ok, ok
+}
+
+func (o testOverlay) Added() []string { return o.added }
+
+func TestContextWithOverlay(t *testing.T) {
+	s := New(t.TempDir(), 1<<20, 10)
+	s.SetAutoInclude(1<<20, 10)
+	_ = s.Put("u", "p/a.txt", []byte("original a"))
+	_ = s.Put("u", "p/b.txt", []byte("original b"))
+	_ = s.Put("u", "p/zz.txt", []byte(strings.Repeat("x", 4000)))
+	ov := testOverlay{
+		versions: map[string]string{"p/a.txt": "edited a", "p/new.md": "new file"},
+		deleted:  map[string]bool{"p/b.txt": true},
+		added:    []string{"p/new.md"},
+	}
+	res := s.ContextWith("u", 300, ov)
+	if !strings.Contains(res.Text, "edited a") || strings.Contains(res.Text, "original a") {
+		t.Fatalf("edit not used:\n%s", res.Text)
+	}
+	if strings.Contains(res.Text, "original b") || strings.Contains(res.Text, "p/b.txt") {
+		t.Fatalf("deleted file shown:\n%s", res.Text)
+	}
+	if !strings.Contains(res.Text, "new file") || !strings.Contains(res.Text, "p/new.md (new in this session)") {
+		t.Fatalf("new file missing:\n%s", res.Text)
+	}
+	if !res.Full["p/a.txt"] || !res.Full["p/new.md"] {
+		t.Fatalf("full %v", res.Full)
+	}
+	if res.Full["p/zz.txt"] || !res.Truncated {
+		t.Fatalf("zz.txt should be truncated: %v", res.Full)
+	}
+	// The uploads themselves are untouched.
+	if got, _ := s.Read("u", "p/a.txt"); string(got) != "original a" {
+		t.Fatalf("upload changed: %q", got)
+	}
+	v := s.View("u")
+	if _, ok, editable, _ := v.Original("p/a.txt"); !ok || !editable {
+		t.Fatal("text not editable")
+	}
+	_ = s.Put("u", "p/doc.pdf", []byte("%PDF-1.4"))
+	if _, ok, editable, why := v.Original("p/doc.pdf"); !ok || editable || why == "" {
+		t.Fatal("pdf editable")
+	}
+	if !v.IsDir("p") || v.IsDir("p/a.txt") || !v.Ignored("p/.git/x") {
+		t.Fatal("view helpers")
+	}
+}

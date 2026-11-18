@@ -115,7 +115,7 @@ func TestSFTPNestedTree(t *testing.T) {
 	if rp, err := client.RealPath("proj/src"); err != nil || rp != "/uploads/proj/src" {
 		t.Fatalf("realpath %q %v", rp, err)
 	}
-	if rp, err := client.RealPath("."); err != nil || rp != "/uploads" {
+	if rp, err := client.RealPath("."); err != nil || rp != "/" {
 		t.Fatalf("realpath . %q %v", rp, err)
 	}
 

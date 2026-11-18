@@ -62,8 +62,11 @@ type Config struct {
 	Chat    Chat    `yaml:"chat"`
 	Footer  Footer  `yaml:"footer"`
 	Uploads Uploads `yaml:"uploads"`
-	GPU     GPU     `yaml:"gpu"`
-	Fit     Fit     `yaml:"fit"`
+	Edit    Edit    `yaml:"edit"`
+	// Downloads is the read-only folder for edited files and archives.
+	Downloads Downloads `yaml:"downloads"`
+	GPU       GPU       `yaml:"gpu"`
+	Fit       Fit       `yaml:"fit"`
 }
 
 // Fit controls the memory check before a model loads, and the context and
@@ -146,6 +149,48 @@ type Uploads struct {
 	FilesBoxRows    int    `yaml:"files_box_rows"`
 	VisionModels    string `yaml:"vision_models"`
 	NonVisionModels string `yaml:"non_vision_models"`
+}
+
+// Edit controls file changes proposed by the model. Every change is
+// reviewed in the TUI before it is used; uploads are never modified.
+type Edit struct {
+	// Mode is on or off. When on, edit mode starts enabled whenever files
+	// are uploaded; the user can toggle it per session.
+	Mode string `yaml:"mode"`
+	// Protocol is how edits are written. Only "blocks" exists today.
+	Protocol string `yaml:"protocol"`
+	// MaxFiles is the number of files one reply may change.
+	MaxFiles    int    `yaml:"max_files"`
+	AllowNew    string `yaml:"allow_new"`
+	AllowDelete string `yaml:"allow_delete"`
+}
+
+// Downloads is where edited files, the patch and archives are prepared.
+type Downloads struct {
+	Dir           string `yaml:"dir"`
+	MaxTotalBytes int64  `yaml:"max_total_bytes"`
+	Archive       string `yaml:"archive"`
+	// PublicHost and PublicPort are only used to print download commands
+	// with the name clients use to reach this server.
+	PublicHost string `yaml:"public_host"`
+	PublicPort int    `yaml:"public_port"`
+}
+
+// EditOn reports whether edit mode is available.
+func (c Config) EditOn() bool { return c.Edit.Mode != "off" }
+
+// EditAllowNew reports whether the model may create files.
+func (c Config) EditAllowNew() bool { return c.Edit.AllowNew != "off" }
+
+// EditAllowDelete reports whether the model may delete files.
+func (c Config) EditAllowDelete() bool { return c.Edit.AllowDelete == "on" }
+
+// PublicPort is the port to show in download commands.
+func (c Config) PublicPort() int {
+	if c.Downloads.PublicPort > 0 {
+		return c.Downloads.PublicPort
+	}
+	return c.Server.Port
 }
 
 // GPU controls the nvidia-smi poller. Mode is auto or off.
@@ -358,6 +403,7 @@ func (c *Config) normalize() {
 	}
 	c.Uploads.VisionModels = strings.TrimSpace(c.Uploads.VisionModels)
 	c.Uploads.NonVisionModels = strings.TrimSpace(c.Uploads.NonVisionModels)
+	c.normalizeEdit()
 	if c.GPU.Mode == "" {
 		c.GPU.Mode = "auto"
 	}
@@ -428,6 +474,36 @@ func (c *Config) normalizeFit() {
 	if strings.TrimSpace(f.Contexts) == "" {
 		f.Contexts = "8k,16k,32k,64k,128k"
 	}
+}
+
+func (c *Config) normalizeEdit() {
+	e := &c.Edit
+	e.Mode = onOff(e.Mode)
+	e.Protocol = strings.ToLower(strings.TrimSpace(e.Protocol))
+	if e.Protocol == "" {
+		e.Protocol = "blocks"
+	}
+	if e.MaxFiles <= 0 {
+		e.MaxFiles = 20
+	}
+	e.AllowNew = onOff(e.AllowNew)
+	if strings.TrimSpace(e.AllowDelete) == "" {
+		e.AllowDelete = "off"
+	}
+	e.AllowDelete = onOff(e.AllowDelete)
+	d := &c.Downloads
+	d.Dir = strings.TrimSpace(d.Dir)
+	if d.Dir == "" {
+		d.Dir = "/downloads"
+	}
+	if d.MaxTotalBytes <= 0 {
+		d.MaxTotalBytes = 200 << 20
+	}
+	d.Archive = strings.ToLower(strings.TrimSpace(d.Archive))
+	if d.Archive == "" {
+		d.Archive = "tar.gz"
+	}
+	d.PublicHost = strings.TrimSpace(d.PublicHost)
 }
 
 func onOff(v string) string {
@@ -548,6 +624,34 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 	set("VISION_MODELS", &c.Uploads.VisionModels)
 	set("NON_VISION_MODELS", &c.Uploads.NonVisionModels)
 	set("GPU_STATS", &c.GPU.Mode)
+	set("EDIT_MODE", &c.Edit.Mode)
+	set("EDIT_PROTOCOL", &c.Edit.Protocol)
+	set("EDIT_ALLOW_NEW", &c.Edit.AllowNew)
+	set("EDIT_ALLOW_DELETE", &c.Edit.AllowDelete)
+	if v, ok := lookup(getenv, "EDIT_MAX_FILES"); ok {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return fmt.Errorf("EDIT_MAX_FILES must be a positive integer")
+		}
+		c.Edit.MaxFiles = n
+	}
+	set("DOWNLOAD_DIR", &c.Downloads.Dir)
+	set("DOWNLOAD_ARCHIVE", &c.Downloads.Archive)
+	set("PUBLIC_HOST", &c.Downloads.PublicHost)
+	if v, ok := lookup(getenv, "DOWNLOAD_MAX_TOTAL_BYTES"); ok {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n <= 0 {
+			return fmt.Errorf("DOWNLOAD_MAX_TOTAL_BYTES must be a positive integer")
+		}
+		c.Downloads.MaxTotalBytes = n
+	}
+	if v, ok := lookup(getenv, "PUBLIC_PORT"); ok {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("PUBLIC_PORT must be a port number (1-65535)")
+		}
+		c.Downloads.PublicPort = n
+	}
 	set("NVIDIA_SMI", &c.GPU.SMIPath)
 	if v, ok := lookup(getenv, "UPLOAD_MAX_BYTES"); ok {
 		n, err := strconv.ParseInt(v, 10, 64)
@@ -808,6 +912,28 @@ func (c Config) validate() error {
 	}
 	if c.Uploads.FilesBoxRows <= 0 {
 		return errors.New("uploads.files_box_rows must be > 0")
+	}
+	switch c.Edit.Protocol {
+	case "blocks":
+	case "tools", "auto":
+		return fmt.Errorf("edit.protocol %q is not available yet; use blocks", c.Edit.Protocol)
+	default:
+		return fmt.Errorf("edit.protocol %q must be blocks", c.Edit.Protocol)
+	}
+	if c.Edit.MaxFiles <= 0 {
+		return errors.New("edit.max_files must be > 0")
+	}
+	if c.Downloads.Archive != "tar.gz" {
+		return fmt.Errorf("downloads.archive %q: only tar.gz is supported", c.Downloads.Archive)
+	}
+	if c.Downloads.MaxTotalBytes <= 0 {
+		return errors.New("downloads.max_total_bytes must be > 0")
+	}
+	if c.Downloads.PublicPort < 0 || c.Downloads.PublicPort > 65535 {
+		return fmt.Errorf("downloads.public_port %d is outside 0-65535", c.Downloads.PublicPort)
+	}
+	if c.Downloads.Dir == c.Uploads.Dir {
+		return errors.New("downloads.dir must differ from uploads.dir")
 	}
 	if !(c.GPU.TempWarn < c.GPU.TempHot && c.GPU.TempHot < c.GPU.TempCrit) {
 		return fmt.Errorf("gpu temperature bands must rise: warn %v hot %v crit %v", c.GPU.TempWarn, c.GPU.TempHot, c.GPU.TempCrit)
