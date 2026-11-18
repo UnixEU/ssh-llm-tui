@@ -1,4 +1,5 @@
-# ssh-llm-tui talks to Docker Model Runner over HTTP only.
+# ssh-llm-tui talks to Docker Model Runner over HTTP only. Model settings
+# (context size, GPU/CPU placement) use the same API as `docker model configure`.
 # Do not add a docker.sock mount and do not install the docker CLI in the image.
 # DMR itself is already running on the host (container docker-model-runner).
 # This file does not start a second model runner.
@@ -6,7 +7,7 @@
 services:
   ssh-llm-tui:
     build: .
-    image: ssh-llm-tui:1.0.2
+    image: ssh-llm-tui:1.1.0
     init: true
     read_only: true
     cap_drop:
@@ -67,6 +68,22 @@ services:
       # DMR_BASE_URL: http://172.17.0.1:12434
       DMR_REQUEST_TIMEOUT: 60s
       DMR_WARM_TIMEOUT: 10m
+      # Memory check, context size and GPU/CPU placement (see README).
+      FIT_CHECK: "on"
+      FIT_MARGIN_MIB: "1024"
+      FIT_MARGIN_PCT: "5"
+      CONTEXT_CHOICES: 8k,16k,32k,64k,128k
+      DEFAULT_CONTEXT: auto
+      CONTEXT_SELECT: "on"
+      TARGET_SELECT: "on"
+      ALLOW_CPU: "on"
+      # KV_CACHE_TYPE: q8_0
+      # CPU_THREADS: "16"
+      # Read-only view of the DMR model store, used to read GGUF headers.
+      # Remove this line and the dmr-models mount below if your DMR does not
+      # keep models in a Docker volume (for example Docker Desktop).
+      MODEL_STORE_PATH: /dmr-models
+      FIT_USAGE_PATH: /data/fit/usage.json
       AUTH_MODE: open
       # Switch to key auth by setting AUTH_MODE=keys and mounting a file:
       # AUTH_MODE: keys
@@ -90,8 +107,20 @@ services:
       # (vim, sed -i) keep working. Edit welcome/banner.txt and reconnect.
       - ./welcome:/config/welcome:ro
       - hostkeys:/data/hostkeys
+      # Measured GPU usage per model (fallback for the memory check).
+      - fitdata:/data/fit
+      # Optional: DMR's model store, read-only. Only GGUF headers are read.
+      # Needs the external volume below; see README "Memory check".
+      - dmr-models:/dmr-models:ro
       # - ./authorized_keys:/keys/authorized_keys:ro
     restart: unless-stopped
 
 volumes:
   hostkeys:
+  fitdata:
+  # Created by Docker Model Runner on Docker Engine. Check the name with
+  # `docker volume ls`. Remove this entry together with the mount above if
+  # it does not exist on your host.
+  dmr-models:
+    external: true
+    name: docker-model-runner-models

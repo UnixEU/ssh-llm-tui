@@ -34,6 +34,12 @@ func (m *Model) View() string {
 		body = m.viewLoading()
 	case screenChat:
 		body = m.viewChat(bodyH)
+	case screenContext:
+		body = m.viewContext()
+	case screenTarget:
+		body = m.viewTarget()
+	case screenFit:
+		body = m.viewFit()
 	default:
 		body = "ssh-llm-tui"
 	}
@@ -112,14 +118,24 @@ func (m *Model) viewLoading() string {
 	if m.loadKind == loadUnload {
 		title = "Freeing the GPU"
 	}
+	if m.loadKind == loadProbe {
+		title = "Checking memory"
+	}
 	header := m.headerBlock(title, "v"+m.version)
 	line := m.theme.spinner.Render(m.spinner.View()+" ") + m.theme.text.Render(m.status)
-	note := m.theme.muted.Width(max(1, m.width)).Render("Other SSH sessions share this GPU. A model change here unloads runners for everyone.")
+	noteText := "Other SSH sessions share this GPU. A model change here unloads runners for everyone."
+	if m.loadKind == loadProbe {
+		noteText = "Reading the model size and the free GPU and system memory. Nothing is loaded yet."
+	}
+	note := m.theme.muted.Width(max(1, m.width)).Render(noteText)
 	return joinLines(header, "", m.boxed(line), "", note)
 }
 
 func (m *Model) viewChat(bodyH int) string {
 	right := (dmr.Model{ID: m.modelID}).DisplayName()
+	if right != "" && m.ctxSize > 0 {
+		right += " · ctx " + ctxLabel(m.ctxSize) + " · " + targetShort(m.target)
+	}
 	if right == "" {
 		right = "v" + m.version
 	}
@@ -275,6 +291,8 @@ func (m *Model) helpLabels(short bool) []string {
 			return []string{"ctrl+q"}
 		}
 		return []string{"ctrl+q exit"}
+	case screenContext, screenTarget, screenFit:
+		return m.fitHelp(short)
 	default:
 		if m.filesFocus {
 			if short {
@@ -283,13 +301,17 @@ func (m *Model) helpLabels(short bool) []string {
 			return []string{"space include", "d remove", "D clear all", "j/k pgup", "esc/ctrl+f back", "ctrl+q exit"}
 		}
 		if short {
-			return []string{"enter", "ctrl+t", "ctrl+r", "ctrl+n", "ctrl+f", "pgup", "esc", "ctrl+q"}
+			return []string{"enter", "ctrl+t", "ctrl+r", "ctrl+n", "ctrl+o", "ctrl+f", "pgup", "esc", "ctrl+q"}
 		}
 		md := "ctrl+r raw"
 		if !m.markdown {
 			md = "ctrl+r render"
 		}
-		return []string{"enter send", "ctrl+t thinking", md, "ctrl+n model", "ctrl+f files", "pgup/pgdn scroll", "esc welcome", "ctrl+q exit"}
+		opts := []string{"enter send", "ctrl+t thinking", md, "ctrl+n model"}
+		if m.cfg.ConfiguresDMR() {
+			opts = append(opts, "ctrl+o options")
+		}
+		return append(opts, "ctrl+f files", "pgup/pgdn scroll", "esc welcome", "ctrl+q exit")
 	}
 }
 

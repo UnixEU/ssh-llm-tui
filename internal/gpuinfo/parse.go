@@ -20,6 +20,9 @@ type GPU struct {
 	UUID        string
 	MemUsedMiB  int
 	MemTotalMiB int
+	// MemFreeMiB is memory.free from the driver. When the column is
+	// missing it is total minus used.
+	MemFreeMiB int
 	// TempC is the driver reading in degrees. nvidia-smi on some hosts
 	// prints a fraction (60.06); the panel rounds it for display and
 	// colours the raw value.
@@ -43,7 +46,7 @@ type Snapshot struct {
 
 // ParseQuery reads the two nvidia-smi CSV blobs.
 //
-//	nvidia-smi --query-gpu=index,name,uuid,memory.used,memory.total,temperature.gpu,power.draw --format=csv,noheader,nounits
+//	nvidia-smi --query-gpu=index,name,uuid,memory.used,memory.total,temperature.gpu,power.draw,memory.free --format=csv,noheader,nounits
 //	nvidia-smi --query-compute-apps=gpu_uuid,used_memory --format=csv,noheader,nounits
 func ParseQuery(gpusCSV, appsCSV string) (Snapshot, error) {
 	snap := Snapshot{OK: true, At: time.Now()}
@@ -71,6 +74,13 @@ func ParseQuery(gpusCSV, appsCSV string) (Snapshot, error) {
 		if w, ok := atof(cols[6]); ok {
 			g.PowerW = w
 			g.PowerKnown = true
+		}
+		g.MemFreeMiB = g.MemTotalMiB - g.MemUsedMiB
+		if len(cols) >= 8 && !isNA(cols[7]) && strings.TrimSpace(cols[7]) != "" {
+			g.MemFreeMiB = atoiRounded(cols[7])
+		}
+		if g.MemFreeMiB < 0 {
+			g.MemFreeMiB = 0
 		}
 		snap.GPUs = append(snap.GPUs, g)
 	}
@@ -197,7 +207,7 @@ func (p *Poller) sample(ctx context.Context) {
 }
 
 func (p *Poller) query(ctx context.Context) Snapshot {
-	gpus, err := p.run(ctx, "--query-gpu=index,name,uuid,memory.used,memory.total,temperature.gpu,power.draw", "--format=csv,noheader,nounits")
+	gpus, err := p.run(ctx, "--query-gpu=index,name,uuid,memory.used,memory.total,temperature.gpu,power.draw,memory.free", "--format=csv,noheader,nounits")
 	if err != nil {
 		return Snapshot{OK: false, Message: "GPU n/a", At: time.Now()}
 	}
@@ -221,6 +231,16 @@ func (p *Poller) run(ctx context.Context, args ...string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// Refresh samples now and returns the result, so a fit check does not act
+// on a reading that is a poll interval old.
+func (p *Poller) Refresh(ctx context.Context) Snapshot {
+	if p == nil || p.mode == "off" {
+		return p.Snapshot()
+	}
+	p.sample(ctx)
+	return p.Snapshot()
 }
 
 // SetSnapshot replaces the latest sample. Tests use it to draw a panel

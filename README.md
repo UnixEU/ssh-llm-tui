@@ -53,7 +53,7 @@ From another container, `127.0.0.1:12434` is the container itself. Compose maps 
 
 Tested with Docker Engine 29.x, an NVIDIA RTX GPU, and Docker Model Runner (llama.cpp backend). The client follows the DMR v1.2.9 HTTP API (`/engines` prefix).
 
-`go test ./...`, `go vet ./...`, and `go test -race ./...` cover the model list, warm, unload, streaming chat, uploads, the GPU panel, and Markdown rendering.
+`go test ./...`, `go vet ./...`, and `go test -race ./...` cover the model list, warm, unload, streaming chat, uploads, the GPU panel, Markdown rendering, the GGUF header reader, the memory estimate and the configure calls.
 
 ## Quick start
 
@@ -69,8 +69,10 @@ Screens:
 
 1. Welcome. The copy comes from the mounted YAML, or from `welcome/banner.txt` when that art fits. Press a key.
 2. Model list. Names are shown without a `docker.io/` prefix (`ai/gpt-oss:20b`). Requests to DMR still use the full id.
-3. The app warms that model on the GPU, then opens the chat.
-4. Chat. Replies stream token by token. History stays in the SSH session.
+3. Context size (8k to 128k, capped by the model's trained context), then where to run it: all GPUs, one GPU, or the CPU. Each choice shows the estimated memory and whether it fits.
+4. Memory check. The estimate per GPU (or RAM), the free memory and the verdict. A model that does not fit is not loaded; the screen offers the largest context that fits, the CPU, or another model.
+5. The app sends the chosen settings to DMR (the same call as `docker model configure`), warms the model, then opens the chat.
+6. Chat. Replies stream token by token. History stays in the SSH session.
 
 If DMR returns an empty list, the model screen says so and tells you to pull a model on the Docker host, then press `r`.
 
@@ -84,6 +86,11 @@ A help bar sits on the last row of every screen. It wraps or shortens on a narro
 | esc | welcome, model list, loading | nothing (on the model list, esc still clears a filter) |
 | esc | chat | unload models if this is the only session, then return to welcome. The SSH session stays open |
 | enter | model list / chat | select a model, or send a line |
+| ↑/↓, `j`/`k`, enter, esc | context and target pickers | choose, continue, go back |
+| enter | memory check | load (only when it fits, or after `y`) |
+| `y` | memory check | load a model whose memory need is unknown |
+| `s` / `p` / `u` / `m` | memory check | use the largest context that fits / run on CPU / unload idle models and check again / back to the model list |
+| `ctrl+o` | chat | change context size or GPU/CPU for the current model |
 | `r` | model list | refresh |
 | `ctrl+t` | chat | expand or collapse the latest reasoning block |
 | `ctrl+r` | chat | switch assistant replies between rendered Markdown and raw text |
@@ -124,7 +131,7 @@ The window can be resized. Finished assistant replies are rendered again at the 
 | `UPLOAD_DIR` | `/uploads` | on-disk root. Files live in `/uploads/<user>/` |
 | `UPLOAD_MAX_BYTES` | `10485760` | per file |
 | `UPLOAD_MAX_FILES` | `10` | per username |
-| `CONTEXT_TOKEN_BUDGET` | `8192` | rough byte/4 cap for included text |
+| `CONTEXT_TOKEN_BUDGET` | `8192` | rough byte/4 cap for included text. Once a context size is chosen, the cap is three quarters of it |
 | `IMAGE_MAX_PX` | `1536` | longest side after downscale |
 | `IMAGE_MAX_BYTES` | `2097152` | encoded image payload cap |
 | `FILES_BOX_ROWS` | `4` | file rows when the box is focused |
@@ -136,6 +143,18 @@ The window can be resized. Finished assistant replies are rendered again at the 
 | `GPU_TEMP_WARN`, `GPU_TEMP_HOT`, `GPU_TEMP_CRIT` | `40`, `60`, `70` | °C colour bands |
 | `GPU_POWER_WARN`, `GPU_POWER_HOT`, `GPU_POWER_CRIT` | `25`, `100`, `200` | watt colour bands |
 | `GPU_MEM_WARN`, `GPU_MEM_HOT`, `GPU_MEM_CRIT` | `40`, `60`, `90` | VRAM percent colour bands |
+| `FIT_CHECK` | `on` | `on`: refuse a model that does not fit and ask before loading one of unknown size. `strict`: refuse unknown sizes too. `off`: no check |
+| `FIT_MARGIN_MIB`, `FIT_MARGIN_PCT` | `1024`, `5` | headroom kept free per GPU (and in RAM): the larger of the two |
+| `CONTEXT_CHOICES` | `8k,16k,32k,64k,128k` | sizes offered by the context picker |
+| `DEFAULT_CONTEXT` | `auto` | preselected size. `auto` is the largest that fits |
+| `CONTEXT_SELECT`, `TARGET_SELECT` | `on` | show the context and GPU/CPU pickers |
+| `ALLOW_CPU` | `on` | offer the CPU (system RAM) target |
+| `MODEL_STORE_PATH` | empty, `/dmr-models` in compose | read-only mount of the DMR model store, used to read GGUF headers |
+| `KV_CACHE_TYPE` | empty (f16) | optional llama.cpp KV cache type, e.g. `q8_0`, sent as `--cache-type-k/v` |
+| `CPU_THREADS` | `0` | llama.cpp threads for the CPU target. `0` keeps the default |
+| `FIT_USAGE_PATH` | `/data/fit/usage.json` | measured GPU usage per model, context and target. `off` keeps it in memory |
+
+With `FIT_CHECK=off`, `CONTEXT_SELECT=off`, `TARGET_SELECT=off` and no `KV_CACHE_TYPE`, model selection works as in 1.0.x: warm only, no configuration call.
 
 Warm, chat, and unload calls send the full model id from `GET /engines/v1/models`. The screen shows the name without a `docker.io/` prefix.
 
@@ -235,6 +254,55 @@ Every SSH session shares one GPU. Warming or unloading takes a process-wide lock
 
 `esc` on the chat screen stays connected. If this is the only TUI session it unloads, then returns to the welcome screen. If someone else is still in the app it skips the unload and still returns to welcome.
 
+## Memory check
+
+Before a model loads, the app estimates how much memory it needs and compares that with what is free right now (`nvidia-smi` `memory.free` per GPU, `MemAvailable` for the CPU target).
+
+Estimate:
+
+- Weights: the tensor data size from the GGUF header (all shards). A vision projector is added on the first GPU.
+- KV cache: `2 × Σ layers (KV heads × head dim) × context × 2 bytes` (f16). Sliding-window layers (Gemma, gpt-oss) only keep the window plus one batch. Layers without attention (hybrid and recurrent models) keep none.
+- Compute buffer and a per-GPU runtime overhead of about 384 MiB.
+- Plus 5 % for error.
+
+Placement:
+
+- Auto spreads layers over every GPU in proportion to free memory, which is llama.cpp's default. Each GPU must fit its own share, its compute buffer and the headroom. Enough memory in total is not enough.
+- A single GPU sends `--device CUDA<n>`. CPU sends `--device none`, so nothing is offloaded.
+- Headroom is `max(FIT_MARGIN_MIB, FIT_MARGIN_PCT % of the device)`. Using part of it is reported as tight and still allowed. Exceeding free memory is refused.
+
+Where the numbers come from:
+
+1. GGUF headers from a read-only mount of DMR's model store (`MODEL_STORE_PATH`). Only the first megabytes of each model file are read.
+2. Without the mount, GPU memory measured after an earlier successful load of the same model, context and target (`FIT_USAGE_PATH`).
+3. With neither, the size is unknown. The check says so and loads only after `y`, or never with `FIT_CHECK=strict`.
+
+DMR does not report model sizes or GGUF metadata over its API (v1.2.9), so the mount is what makes the check exact. On Docker Engine, DMR keeps models in the volume `docker-model-runner-models`. Compose mounts it read-only:
+
+```yaml
+    environment:
+      MODEL_STORE_PATH: /dmr-models
+    volumes:
+      - dmr-models:/dmr-models:ro
+
+volumes:
+  dmr-models:
+    external: true
+    name: docker-model-runner-models
+```
+
+Check the name with `docker volume ls`. If DMR does not keep models in a Docker volume (Docker Desktop, for example), remove the mount, the volume entry and `MODEL_STORE_PATH`. The check then relies on measured usage. The mount is read-only and contains only model files. It gives no access to Docker.
+
+Settings go to DMR as `POST /engines/_configure`, the same API as `docker model configure`. The check screen shows the equivalent command, for example:
+
+```bash
+docker model configure --context-size 32768 ai/gpt-oss:20b -- --device none
+```
+
+DMR keeps one configuration per model for all sessions, and forgets it when it restarts. The app sends it again before every load. If another session is in the middle of a reply on the same model, DMR refuses the change (HTTP 409), and the app says so instead of loading.
+
+The estimate is an estimate. Another process can take GPU memory between the check and the load, and some architectures allocate more than the formula expects. The headroom absorbs small errors.
+
 ## DMR HTTP API
 
 Written against DMR v1.2.9, whose routes use the prefix `/engines`. Reference: [DMR REST API](https://docs.docker.com/ai/model-runner/api-reference/). Some third-party pages still say `/inference/unload`. That path does not match v1.2.9.
@@ -245,6 +313,9 @@ Written against DMR v1.2.9, whose routes use the prefix `/engines`. Reference: [
 | Warm into GPU memory | `POST /engines/v1/chat/completions` with header `X-Preload-Only: true` and body `{"model":"<full id>","messages":[]}` |
 | Stream a reply | `POST /engines/v1/chat/completions` with `"stream": true` |
 | Unload all runners | `POST /engines/unload` with `{"all":true}` |
+| Set context size and runtime flags | `POST /engines/_configure` with `{"model":"<full id>","context-size":32768,"runtime-flags":["--device","CUDA1"]}`. 202 on success, 409 when the model is busy |
+| Read configurations | `GET /engines/_configure?model=<full id>` |
+| Running runners | `GET /engines/ps` |
 
 `POST /models/load` imports a model tar in v1.2.9. This app does not call it.
 
@@ -253,7 +324,8 @@ A model list entry looks like `docker.io/ai/gpt-oss:20b` with an empty `dmr` obj
 ## Security
 
 - `AUTH_MODE=open` belongs on a trusted LAN. Do not publish port 2222 on the public internet in open mode. Use `AUTH_MODE=keys` beyond that LAN.
-- No Docker socket, no `docker` CLI, and no shell in the session.
+- No Docker socket, no `docker` CLI, and no shell in the session. Context size and GPU/CPU placement use DMR's HTTP API, whose runtime flags DMR checks against its own allowlist.
+- The optional model store mount is read-only. The app only reads GGUF headers and the store index from it.
 - Chat text is sent only to DMR. The server log records connections and model ids, not message bodies.
 - The image runs as non-root (uid 65532), read-only, with all capabilities dropped and `no-new-privileges`.
 - Do not commit host keys or `authorized_keys`.
@@ -263,7 +335,8 @@ A model list entry looks like `docker.io/ai/gpt-oss:20b` with an empty `dmr` obj
 - Unload skips runners that are mid-request. `ctrl+n` cannot free the GPU out from under another session's in-flight reply.
 - Cancelling a warm (by leaving the session) aborts the HTTP wait. DMR may still finish loading the runner it already started.
 - Concurrent chats share whatever is currently loaded.
-- The app does not pull, delete, or configure models.
+- The app does not pull or delete models. It configures context size and placement per model, but it does not reinstall the runner (`docker model reinstall-runner --gpu`). Switching the whole runner between CUDA and CPU images needs the Docker API, so it stays a host task.
+- GPU indexes in the target picker follow `nvidia-smi`. llama.cpp names devices in CUDA order (`CUDA0`, `CUDA1`). On hosts with different GPU models the two orders can differ unless DMR runs with `CUDA_DEVICE_ORDER=PCI_BUS_ID`.
 
 ## Develop
 
@@ -271,7 +344,7 @@ A model list entry looks like `docker.io/ai/gpt-oss:20b` with an empty `dmr` obj
 go test ./...
 go vet ./...
 go test -race ./...
-docker build -t ssh-llm-tui:1.0.2 .
+docker build -t ssh-llm-tui:1.1.0 .
 ```
 
 Go 1.24 or newer. The module downloads a newer toolchain if the system Go is older.

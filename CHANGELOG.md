@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.0
+
+- Memory check before a model loads. The app estimates the memory a model needs (weights, KV cache for the chosen context, compute buffers, runtime overhead, plus 5 %) and compares it with the memory free on each GPU, or in RAM for the CPU target. A model that does not fit is not loaded. The screen shows the numbers per device and offers the largest context that fits, the CPU, unloading idle models, or another model.
+- Multi-GPU aware: with several GPUs the check splits the model as llama.cpp does and requires every GPU to fit its share, not just the total.
+- Context size picker (8k, 16k, 32k, 64k, 128k by default, capped by the model's trained context). The file context budget follows the chosen size.
+- Target picker: all GPUs, a single GPU, or the CPU. Settings are sent through DMR's configure API (`POST /engines/_configure`, the same as `docker model configure`). A busy model (HTTP 409) gets a clear message instead of a failed load.
+- Optional read-only mount of DMR's model store (`docker-model-runner-models`) for exact sizes from GGUF headers. Without it the check uses GPU memory measured on earlier loads, and asks before loading a model of unknown size (`FIT_CHECK=strict` refuses).
+- `ctrl+o` in the chat changes context size or placement for the current model.
+- New settings: `FIT_CHECK`, `FIT_MARGIN_MIB`, `FIT_MARGIN_PCT`, `CONTEXT_CHOICES`, `DEFAULT_CONTEXT`, `CONTEXT_SELECT`, `TARGET_SELECT`, `ALLOW_CPU`, `MODEL_STORE_PATH`, `KV_CACHE_TYPE`, `CPU_THREADS`, `FIT_USAGE_PATH`.
+- The GPU poller also reads `memory.free`.
+
 ## 1.0.2
 
 - New default GPU colour bands. Temperature: green below 40 °C, yellow from 40, orange from 60, red from 70. VRAM: green below 40 %, yellow from 40, orange from 60, red from 90. Power: green below 25 W, yellow from 25, orange from 100, red from 200. All bands can still be set through the `GPU_*` variables.

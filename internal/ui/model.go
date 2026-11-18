@@ -8,8 +8,10 @@ import (
 
 	"github.com/UnixEU/ssh-llm-tui/internal/config"
 	"github.com/UnixEU/ssh-llm-tui/internal/dmr"
+	"github.com/UnixEU/ssh-llm-tui/internal/fit"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpu"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpuinfo"
+	"github.com/UnixEU/ssh-llm-tui/internal/sysmem"
 	"github.com/UnixEU/ssh-llm-tui/internal/think"
 	"github.com/UnixEU/ssh-llm-tui/internal/uploads"
 	"github.com/charmbracelet/bubbles/list"
@@ -28,6 +30,9 @@ const (
 	screenModels
 	screenLoading
 	screenChat
+	screenContext
+	screenTarget
+	screenFit
 )
 
 type loadKind int
@@ -35,6 +40,7 @@ type loadKind int
 const (
 	loadWarm loadKind = iota
 	loadUnload
+	loadProbe
 )
 
 type turnRole int
@@ -71,6 +77,12 @@ type Options struct {
 	GPU      *gpuinfo.Poller
 	Unloader SoleUnloader
 	Budget   int
+	// Resolver reads model headers for the fit check. Nil disables it.
+	Resolver *fit.Resolver
+	// Learned holds measured usage, the fallback when headers are unknown.
+	Learned *fit.Learned
+	// ReadRAM reads system memory for the CPU target.
+	ReadRAM func() (sysmem.Info, error)
 }
 
 // Model is the bubbletea application for one SSH session.
@@ -86,6 +98,14 @@ type Model struct {
 	gpu      *gpuinfo.Poller
 	unloader SoleUnloader
 	budget   int
+	// baseBudget is CONTEXT_TOKEN_BUDGET, used until a context is chosen.
+	baseBudget int
+	resolver   *fit.Resolver
+	learned    *fit.Learned
+	readRAM    func() (sysmem.Info, error)
+	fit        *fitState
+	ctxSize    int
+	target     fit.Target
 
 	screen   screen
 	width    int
@@ -167,7 +187,7 @@ func New(opts Options) *Model {
 		opts.User = "guest"
 	}
 	if strings.TrimSpace(opts.Version) == "" {
-		opts.Version = "1.0.2"
+		opts.Version = "1.1.0"
 	}
 	if opts.Budget <= 0 {
 		opts.Budget = uploads.DefaultBudget
@@ -214,14 +234,19 @@ func New(opts Options) *Model {
 		gpu:      opts.GPU,
 		unloader: opts.Unloader,
 		budget:   opts.Budget,
-		markdown: opts.Config.MarkdownOn(),
-		screen:   screenWelcome,
-		width:    80,
-		height:   24,
-		list:     items,
-		spinner:  sp,
-		viewport: vp,
-		input:    ti,
+		resolver: opts.Resolver,
+		learned:  opts.Learned,
+		readRAM:  opts.ReadRAM,
+
+		baseBudget: opts.Budget,
+		markdown:   opts.Config.MarkdownOn(),
+		screen:     screenWelcome,
+		width:      80,
+		height:     24,
+		list:       items,
+		spinner:    sp,
+		viewport:   vp,
+		input:      ti,
 	}
 }
 
@@ -268,6 +293,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onStream(msg)
 	case homeMsg:
 		return m.onHome(msg)
+	case probeMsg:
+		return m.onProbe(msg)
+	case applyMsg:
+		return m.onApply(msg)
+	case freedMsg:
+		return m.onFreed(msg)
 	default:
 		return m, nil
 	}
@@ -296,6 +327,12 @@ func (m *Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.onModelsKey(msg)
 	case screenChat:
 		return m.onChatKey(msg)
+	case screenContext:
+		return m.onContextKey(msg)
+	case screenTarget:
+		return m.onTargetKey(msg)
+	case screenFit:
+		return m.onFitKey(msg)
 	default:
 		return m, nil
 	}
@@ -346,6 +383,12 @@ func (m *Model) onChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.backToWelcome()
 	case "ctrl+n":
 		return m.changeModel()
+	case "ctrl+o":
+		if m.streaming || m.modelID == "" || !m.cfg.ConfiguresDMR() {
+			return m, nil
+		}
+		m.commitPartial()
+		return m.startProbe(m.modelID, true)
 	case "ctrl+t":
 		m.toggleThinking()
 		return m, nil
@@ -471,12 +514,19 @@ func (m *Model) onWarm(msg warmMsg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		return m, nil
 	}
-	m.modelID = msg.model
+	shown := (dmr.Model{ID: msg.model}).DisplayName()
+	m.ctxSize = 0
+	m.budget = m.baseBudget
+	return m.enterChat(msg.model, "Using "+shown+". This GPU is shared with every SSH session.")
+}
+
+func (m *Model) enterChat(model, note string) (tea.Model, tea.Cmd) {
+	m.modelID = model
+	m.fit = nil
 	m.errText = ""
 	m.status = ""
 	m.screen = screenChat
-	shown := (dmr.Model{ID: msg.model}).DisplayName()
-	m.turns = append(m.turns, turn{role: roleNote, content: "Using " + shown + ". This GPU is shared with every SSH session."})
+	m.turns = append(m.turns, turn{role: roleNote, content: note})
 	m.syncTranscript(true)
 	return m, m.input.Focus()
 }
@@ -583,6 +633,9 @@ func (m *Model) selectModel() (tea.Model, tea.Cmd) {
 	item, ok := m.list.SelectedItem().(modelItem)
 	if !ok || item.model.ID == "" {
 		return m, nil
+	}
+	if m.cfg.ConfiguresDMR() {
+		return m.startProbe(item.model.ID, false)
 	}
 	return m.startWarm(item.model.ID)
 }

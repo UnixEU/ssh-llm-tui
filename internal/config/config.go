@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -62,6 +63,65 @@ type Config struct {
 	Footer  Footer  `yaml:"footer"`
 	Uploads Uploads `yaml:"uploads"`
 	GPU     GPU     `yaml:"gpu"`
+	Fit     Fit     `yaml:"fit"`
+}
+
+// Fit controls the memory check before a model loads, and the context and
+// placement pickers.
+type Fit struct {
+	// Check is off, on (a model that does not fit is refused; an unknown
+	// need asks for confirmation) or strict (an unknown need is refused).
+	Check string `yaml:"check"`
+	// MarginMiB and MarginPct set the headroom kept free on every device:
+	// max(MarginMiB, MarginPct of the device's total memory).
+	MarginMiB int64   `yaml:"margin_mib"`
+	MarginPct float64 `yaml:"margin_pct"`
+	// Contexts is the list offered by the context picker, e.g. "8k,16k".
+	Contexts string `yaml:"contexts"`
+	// DefaultContext is the preselected context: "auto" (the largest that
+	// fits) or a token count.
+	DefaultContext string `yaml:"default_context"`
+	// ContextSelect and TargetSelect show the pickers (on or off).
+	ContextSelect string `yaml:"context_select"`
+	TargetSelect  string `yaml:"target_select"`
+	// AllowCPU offers the CPU (system RAM) target.
+	AllowCPU string `yaml:"allow_cpu"`
+	// ModelStorePath is a read-only mount of the DMR model store. Empty
+	// disables header reading; the check then relies on measured usage.
+	ModelStorePath string `yaml:"model_store_path"`
+	// KVCacheType is an optional llama.cpp KV cache type (f16, q8_0, q4_0).
+	KVCacheType string `yaml:"kv_cache_type"`
+	// CPUThreads sets llama.cpp threads for the CPU target. 0 keeps the default.
+	CPUThreads int `yaml:"cpu_threads"`
+	// UsagePath stores measured GPU usage per model, context and target.
+	UsagePath string `yaml:"usage_path"`
+
+	// ContextChoices is Contexts parsed. Filled by Load.
+	ContextChoices []int `yaml:"-"`
+	// DefaultContextTokens is DefaultContext parsed; 0 means auto.
+	DefaultContextTokens int `yaml:"-"`
+}
+
+// FitOn reports whether the memory check runs.
+func (c Config) FitOn() bool { return c.Fit.Check != "off" }
+
+// FitStrict reports whether an unknown memory need blocks loading.
+func (c Config) FitStrict() bool { return c.Fit.Check == "strict" }
+
+// ContextPicker reports whether the context picker is shown.
+func (c Config) ContextPicker() bool { return c.Fit.ContextSelect != "off" }
+
+// TargetPicker reports whether the GPU/CPU picker is shown.
+func (c Config) TargetPicker() bool { return c.Fit.TargetSelect != "off" }
+
+// CPUAllowed reports whether the CPU target is offered.
+func (c Config) CPUAllowed() bool { return c.Fit.AllowCPU != "off" }
+
+// ConfiguresDMR reports whether the app sends a runtime configuration to
+// DMR before loading. With every fit feature off the app behaves like
+// earlier releases and only warms the model.
+func (c Config) ConfiguresDMR() bool {
+	return c.FitOn() || c.ContextPicker() || c.TargetPicker() || c.Fit.KVCacheType != ""
 }
 
 // Uploads limits files received over SCP and SFTP.
@@ -207,6 +267,9 @@ func Load(opts LoadOptions) (Config, error) {
 		return Config{}, err
 	}
 	cfg.normalize()
+	if err := cfg.parseFit(); err != nil {
+		return Config{}, err
+	}
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
@@ -310,6 +373,108 @@ func (c *Config) normalize() {
 	if c.GPU.MemCrit <= 0 {
 		c.GPU.MemCrit = 90
 	}
+	c.normalizeFit()
+}
+
+func (c *Config) normalizeFit() {
+	f := &c.Fit
+	f.Check = strings.ToLower(strings.TrimSpace(f.Check))
+	if f.Check == "" {
+		f.Check = "on"
+	}
+	f.ContextSelect = onOff(f.ContextSelect)
+	f.TargetSelect = onOff(f.TargetSelect)
+	f.AllowCPU = onOff(f.AllowCPU)
+	f.ModelStorePath = strings.TrimSpace(f.ModelStorePath)
+	f.KVCacheType = strings.ToLower(strings.TrimSpace(f.KVCacheType))
+	f.UsagePath = strings.TrimSpace(f.UsagePath)
+	switch strings.ToLower(f.UsagePath) {
+	case "":
+		f.UsagePath = "/data/fit/usage.json"
+	case "off", "none":
+		f.UsagePath = ""
+	}
+	f.DefaultContext = strings.ToLower(strings.TrimSpace(f.DefaultContext))
+	if f.DefaultContext == "" {
+		f.DefaultContext = "auto"
+	}
+	if f.MarginMiB <= 0 {
+		f.MarginMiB = 1024
+	}
+	if f.MarginPct <= 0 {
+		f.MarginPct = 5
+	}
+	if strings.TrimSpace(f.Contexts) == "" {
+		f.Contexts = "8k,16k,32k,64k,128k"
+	}
+}
+
+func onOff(v string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	switch v {
+	case "off", "false", "no", "0":
+		return "off"
+	}
+	return "on"
+}
+
+// ParseTokens reads "32768", "32k" or "32K".
+func ParseTokens(s string) (int, error) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	mult := 1
+	if strings.HasSuffix(s, "k") {
+		mult = 1024
+		s = strings.TrimSuffix(s, "k")
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid token count %q", s)
+	}
+	return n * mult, nil
+}
+
+func (c *Config) parseFit() error {
+	f := &c.Fit
+	switch f.Check {
+	case "on", "off", "strict":
+	default:
+		return fmt.Errorf("FIT_CHECK must be on, off or strict, got %q", f.Check)
+	}
+	if f.MarginPct >= 50 {
+		return fmt.Errorf("FIT_MARGIN_PCT must be below 50")
+	}
+	f.ContextChoices = nil
+	for _, part := range strings.Split(f.Contexts, ",") {
+		if strings.TrimSpace(part) == "" {
+			continue
+		}
+		n, err := ParseTokens(part)
+		if err != nil {
+			return fmt.Errorf("CONTEXT_CHOICES: %w", err)
+		}
+		f.ContextChoices = append(f.ContextChoices, n)
+	}
+	if len(f.ContextChoices) == 0 {
+		return fmt.Errorf("CONTEXT_CHOICES is empty")
+	}
+	sort.Ints(f.ContextChoices)
+	f.DefaultContextTokens = 0
+	if f.DefaultContext != "auto" {
+		n, err := ParseTokens(f.DefaultContext)
+		if err != nil {
+			return fmt.Errorf("DEFAULT_CONTEXT: %w", err)
+		}
+		f.DefaultContextTokens = n
+	}
+	switch f.KVCacheType {
+	case "", "f16", "bf16", "f32", "q8_0", "q5_0", "q5_1", "q4_0", "q4_1", "iq4_nl":
+	default:
+		return fmt.Errorf("KV_CACHE_TYPE %q is not a llama.cpp cache type", f.KVCacheType)
+	}
+	if f.CPUThreads < 0 {
+		return fmt.Errorf("CPU_THREADS must be >= 0")
+	}
+	return nil
 }
 
 func (c *Config) applyEnv(getenv func(string) string) error {
@@ -449,6 +614,32 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 	}
 	if err := applyFloatEnv(getenv, "GPU_MEM_CRIT", &c.GPU.MemCrit); err != nil {
 		return err
+	}
+	set("FIT_CHECK", &c.Fit.Check)
+	set("CONTEXT_CHOICES", &c.Fit.Contexts)
+	set("DEFAULT_CONTEXT", &c.Fit.DefaultContext)
+	set("CONTEXT_SELECT", &c.Fit.ContextSelect)
+	set("TARGET_SELECT", &c.Fit.TargetSelect)
+	set("ALLOW_CPU", &c.Fit.AllowCPU)
+	set("MODEL_STORE_PATH", &c.Fit.ModelStorePath)
+	set("KV_CACHE_TYPE", &c.Fit.KVCacheType)
+	set("FIT_USAGE_PATH", &c.Fit.UsagePath)
+	if v, ok := lookup(getenv, "FIT_MARGIN_MIB"); ok {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n <= 0 {
+			return fmt.Errorf("FIT_MARGIN_MIB must be a positive integer")
+		}
+		c.Fit.MarginMiB = n
+	}
+	if err := applyFloatEnv(getenv, "FIT_MARGIN_PCT", &c.Fit.MarginPct); err != nil {
+		return err
+	}
+	if v, ok := lookup(getenv, "CPU_THREADS"); ok {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return fmt.Errorf("CPU_THREADS must be a non-negative integer")
+		}
+		c.Fit.CPUThreads = n
 	}
 	return nil
 }
