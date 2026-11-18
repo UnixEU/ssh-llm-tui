@@ -46,12 +46,21 @@ func (m *Model) loadedNote() string {
 	switch {
 	case f.busy:
 		return m.theme.fileNote.Render("This model is answering in another session. Its settings cannot change until that reply finishes.")
-	case f.loaded && f.current != nil && f.current.ContextSize > 0:
-		return m.theme.muted.Render("Loaded now with ctx " + ctxLabel(f.current.ContextSize) + ". Other settings reload it.")
-	case f.loaded:
-		return m.theme.muted.Render("Loaded now with Docker Model Runner defaults. Other settings reload it.")
 	}
-	return ""
+	note := ""
+	switch {
+	case f.loaded && f.current != nil && f.current.ContextSize > 0:
+		note = "Loaded now with ctx " + ctxLabel(f.current.ContextSize) + ". Other settings reload it."
+	case f.loaded:
+		note = "Loaded now with Docker Model Runner defaults. Other settings reload it."
+	}
+	if note != "" && f.reclaim > 0 {
+		note += " Its ≈ " + fit.FormatBytes(f.reclaim) + " on the GPU count as free."
+	}
+	if note == "" {
+		return ""
+	}
+	return m.theme.muted.Render(note)
 }
 
 // estimateCell is "≈ 19.8 GiB" or "?".

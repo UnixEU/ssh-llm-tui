@@ -33,6 +33,9 @@ type fitState struct {
 	current *dmr.ModelConfig
 	// others counts runners of other models.
 	others int
+	// reclaim is GPU memory held by this model's idle runner, counted as
+	// free: DMR stops that runner before it starts one with new settings.
+	reclaim int64
 
 	choices []int
 	ctxIdx  int
@@ -152,6 +155,8 @@ func (m *Model) onProbe(msg probeMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	f.reclaim = m.reclaimRunning()
+
 	f.choices = fit.CapContexts(m.cfg.Fit.ContextChoices, f.info.MaxContext())
 	f.targets = []fit.Target{{Kind: fit.TargetAuto}}
 	if len(f.gpus) > 1 {
@@ -175,6 +180,63 @@ func (m *Model) onProbe(msg probeMsg) (tea.Model, tea.Cmd) {
 		return m.evaluate()
 	}
 	return m, nil
+}
+
+// reclaimRunning credits the GPU memory of this model's own idle runner
+// back to the devices it sits on. Reconfiguring a loaded model makes DMR
+// stop that runner first, so without the credit the model would compete
+// with itself and a context change could be refused. The credit is the
+// unpadded estimate of the running configuration (no KV cache when its
+// context is unknown), capped at what each GPU reports in use, so it errs
+// on the small side.
+func (m *Model) reclaimRunning() int64 {
+	f := m.fit
+	if !f.loaded || f.busy || !f.info.Known() || len(f.gpus) == 0 {
+		return 0
+	}
+	ctx := 0
+	var device []string
+	if f.current != nil {
+		ctx = f.current.ContextSize
+		device = targetFlags(f.current.RuntimeFlags)
+	}
+	est := fit.EstimateFor(f.info, ctx, m.cfg.Fit.KVCacheType)
+	est.Factor = 1
+	var on []int
+	switch {
+	case len(device) == 2 && device[1] == "none":
+		return 0
+	case len(device) == 2:
+		for i, g := range f.gpus {
+			if "CUDA"+strconv.Itoa(g.Index) == device[1] {
+				on = append(on, i)
+			}
+		}
+	default:
+		for i := range f.gpus {
+			on = append(on, i)
+		}
+	}
+	var used int64
+	for _, i := range on {
+		used += int64(f.usedMiB[f.gpus[i].Index]) * mibBytes
+	}
+	if used <= 0 {
+		return 0
+	}
+	amount := est.Model() + int64(len(on))*est.Overhead
+	var total int64
+	for _, i := range on {
+		g := &f.gpus[i]
+		u := int64(f.usedMiB[g.Index]) * mibBytes
+		credit := int64(float64(amount) * float64(u) / float64(used))
+		if credit > u {
+			credit = u
+		}
+		g.FreeBytes += credit
+		total += credit
+	}
+	return total
 }
 
 // initialTarget keeps the target the model is configured with, else Auto.

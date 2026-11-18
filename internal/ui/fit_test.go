@@ -306,3 +306,42 @@ func gpuGPU(i int, freeGiB int64) gpuinfoGPU {
 }
 
 type gpuinfoGPU = gpuinfo.GPU
+
+// A loaded, idle model is reloaded by DMR when its settings change, so the
+// memory it holds now counts as free for its own check.
+func TestOwnIdleRunnerCountsAsFree(t *testing.T) {
+	m := fitModel(t, nil, nil)
+	info := denseModel()
+	run := func(loaded, busy bool) *fitState {
+		msg := probeMsg{gen: m.gen, model: "docker.io/ai/example:8b", info: info}
+		msg.snap.OK = true
+		// 8 GiB GPU, 6 GiB of it held by the running model.
+		msg.snap.GPUs = []gpuinfoGPU{{Index: 0, Name: "Test GPU", MemTotalMiB: 8192, MemUsedMiB: 6144, MemFreeMiB: 2048}}
+		msg.ram.TotalBytes, msg.ram.AvailableBytes = 64*gib, 60*gib
+		if loaded {
+			msg.runners = []dmr.Runner{{Model: "ai/example:8b", InUse: busy}}
+			msg.configs = []dmr.ModelConfig{{Model: "docker.io/ai/example:8b", ContextSize: 8192}}
+		}
+		m.fit = &fitState{model: msg.model}
+		m.Update(msg)
+		return m.fit
+	}
+	f := run(false, false)
+	if f.reclaim != 0 || m.checkAt(8192, fit.Target{}).Verdict != fit.NoFit {
+		t.Fatalf("not loaded: reclaim %d verdict %v", f.reclaim, m.checkAt(8192, fit.Target{}).Verdict)
+	}
+	f = run(true, false)
+	if f.reclaim <= 4*gib || f.reclaim > 6*gib {
+		t.Fatalf("reclaim %d", f.reclaim)
+	}
+	if v := m.checkAt(16384, fit.Target{}).Verdict; v == fit.NoFit {
+		t.Fatalf("16k on the model's own memory: %v", v)
+	}
+	if !strings.Contains(m.View(), "count as free") {
+		t.Fatalf("view does not explain the credit:\n%s", m.View())
+	}
+	// A busy runner cannot be reconfigured, so nothing is credited.
+	if f = run(true, true); f.reclaim != 0 {
+		t.Fatalf("busy reclaim %d", f.reclaim)
+	}
+}

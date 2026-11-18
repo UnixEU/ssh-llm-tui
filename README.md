@@ -270,6 +270,7 @@ Placement:
 
 - Auto spreads layers over every GPU in proportion to free memory, which is llama.cpp's default. Each GPU must fit its own share, its compute buffer and the headroom. Enough memory in total is not enough.
 - A single GPU sends `--device CUDA<n>`. CPU sends `--device none`, so nothing is offloaded.
+- Changing the settings of a model that is loaded and idle makes DMR stop its runner before starting the new one. The memory that runner holds (as estimated, capped at what the GPU reports in use) counts as free for that check, so the model does not compete with itself.
 - Headroom is `max(FIT_MARGIN_MIB, FIT_MARGIN_PCT % of the device)`. Using part of it is reported as tight and still allowed. Exceeding free memory is refused.
 
 Where the numbers come from:
