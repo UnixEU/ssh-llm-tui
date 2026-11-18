@@ -2,7 +2,7 @@
 
 SSH terminal chat for local models served by [Docker Model Runner](https://docs.docker.com/ai/model-runner/) (DMR). Connect with `ssh -p 2222 user@host` and you get this app instead of a shell.
 
-Version 1.0.1. The interface is a terminal UI, built with Go and the Charm stack (Wish, Bubble Tea, Lip Gloss, Bubbles). Released under the MIT license. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
+Version 1.0.2. The interface is a terminal UI, built with Go and the Charm stack (Wish, Bubble Tea, Lip Gloss, Bubbles). Released under the MIT license. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
 
 The container talks to DMR only over HTTP. It does not mount the Docker socket and it does not call the `docker` CLI, so it cannot pull models or start containers.
 
@@ -133,9 +133,9 @@ The window can be resized. Finished assistant replies are rendered again at the 
 | `GPU_STATS` | `auto` | `auto` or `off` |
 | `GPU_POLL_INTERVAL` | `2s` | nvidia-smi poll |
 | `NVIDIA_SMI` | `nvidia-smi` | path to the binary |
-| `GPU_TEMP_WARN`, `GPU_TEMP_HOT`, `GPU_TEMP_CRIT` | `50`, `60`, `70` | °C colour bands |
-| `GPU_POWER_WARN`, `GPU_POWER_HOT`, `GPU_POWER_CRIT` | `50`, `75`, `150` | watt colour bands |
-| `GPU_MEM_WARN`, `GPU_MEM_HOT`, `GPU_MEM_CRIT` | `25`, `50`, `75` | VRAM percent colour bands |
+| `GPU_TEMP_WARN`, `GPU_TEMP_HOT`, `GPU_TEMP_CRIT` | `40`, `60`, `70` | °C colour bands |
+| `GPU_POWER_WARN`, `GPU_POWER_HOT`, `GPU_POWER_CRIT` | `25`, `100`, `200` | watt colour bands |
+| `GPU_MEM_WARN`, `GPU_MEM_HOT`, `GPU_MEM_CRIT` | `40`, `60`, `90` | VRAM percent colour bands |
 
 Warm, chat, and unload calls send the full model id from `GET /engines/v1/models`. The screen shows the name without a `docker.io/` prefix.
 
@@ -203,7 +203,7 @@ Bytes are stored under `UPLOAD_DIR` (default `/uploads/<user>/`), which compose 
 
 Every screen keeps a GPU panel in the top-right. One poller serves every session (`GPU_POLL_INTERVAL`, default 2s). `GPU_STATS=off` hides it. If `nvidia-smi` is missing, the line is `GPU n/a` and chat still works.
 
-Each GPU is a column of four rows: the name in blue, VRAM used/total and percent, temperature, and power. A model loaded on that GPU (`nvidia-smi` compute memory) makes the name bold and adds `*`. Those GPUs are drawn first. Several GPUs sit side by side. If they do not fit on one row, the columns wrap onto a second block. Narrower terminals use one coloured line per GPU.
+Each GPU is a column of four rows: the name in the terminal's default text colour, VRAM used/total and percent, temperature, and power. A model loaded on that GPU (`nvidia-smi` compute memory) makes the name bold and adds `*`. Those GPUs are drawn first. Several GPUs sit side by side. If they do not fit on one row, the columns wrap onto a second block. Narrower terminals use one coloured line per GPU.
 
 | | green | yellow | orange | red |
 | --- | --- | --- | --- | --- |
@@ -271,7 +271,7 @@ A model list entry looks like `docker.io/ai/gpt-oss:20b` with an empty `dmr` obj
 go test ./...
 go vet ./...
 go test -race ./...
-docker build -t ssh-llm-tui:1.0.1 .
+docker build -t ssh-llm-tui:1.0.2 .
 ```
 
 Go 1.24 or newer. The module downloads a newer toolchain if the system Go is older.

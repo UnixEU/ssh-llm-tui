@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.2
+
+- New default GPU colour bands. Temperature: green below 40 °C, yellow from 40, orange from 60, red from 70. VRAM: green below 40 %, yellow from 40, orange from 60, red from 90. Power: green below 25 W, yellow from 25, orange from 100, red from 200. All bands can still be set through the `GPU_*` variables.
+- The GPU name uses the terminal's default text colour instead of blue, so only the values change colour.
+
 ## 1.0.1
 
 - Clients that pipeline concurrent SFTP writes, such as OpenSSH sftp, could store a truncated or corrupt upload. The upload buffer is locked and grows by doubling. SCP already reads one file as a single stream and is unchanged.

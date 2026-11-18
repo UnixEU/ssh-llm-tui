@@ -284,7 +284,7 @@ func (c *Config) normalize() {
 		c.GPU.SMIPath = "nvidia-smi"
 	}
 	if c.GPU.TempWarn <= 0 {
-		c.GPU.TempWarn = 50
+		c.GPU.TempWarn = 40
 	}
 	if c.GPU.TempHot <= 0 {
 		c.GPU.TempHot = 60
@@ -293,22 +293,22 @@ func (c *Config) normalize() {
 		c.GPU.TempCrit = 70
 	}
 	if c.GPU.PowerWarn <= 0 {
-		c.GPU.PowerWarn = 50
+		c.GPU.PowerWarn = 25
 	}
 	if c.GPU.PowerHot <= 0 {
-		c.GPU.PowerHot = 75
+		c.GPU.PowerHot = 100
 	}
 	if c.GPU.PowerCrit <= 0 {
-		c.GPU.PowerCrit = 150
+		c.GPU.PowerCrit = 200
 	}
 	if c.GPU.MemWarn <= 0 {
-		c.GPU.MemWarn = 25
+		c.GPU.MemWarn = 40
 	}
 	if c.GPU.MemHot <= 0 {
-		c.GPU.MemHot = 50
+		c.GPU.MemHot = 60
 	}
 	if c.GPU.MemCrit <= 0 {
-		c.GPU.MemCrit = 75
+		c.GPU.MemCrit = 90
 	}
 }
 

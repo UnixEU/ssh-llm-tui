@@ -6,7 +6,7 @@
 services:
   ssh-llm-tui:
     build: .
-    image: ssh-llm-tui:1.0.1
+    image: ssh-llm-tui:1.0.2
     init: true
     read_only: true
     cap_drop:
@@ -41,15 +41,15 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: utility
       GPU_STATS: auto
       GPU_POLL_INTERVAL: 2s
-      GPU_TEMP_WARN: "50"
+      GPU_TEMP_WARN: "40"
       GPU_TEMP_HOT: "60"
       GPU_TEMP_CRIT: "70"
-      GPU_POWER_WARN: "50"
-      GPU_POWER_HOT: "75"
-      GPU_POWER_CRIT: "150"
-      GPU_MEM_WARN: "25"
-      GPU_MEM_HOT: "50"
-      GPU_MEM_CRIT: "75"
+      GPU_POWER_WARN: "25"
+      GPU_POWER_HOT: "100"
+      GPU_POWER_CRIT: "200"
+      GPU_MEM_WARN: "40"
+      GPU_MEM_HOT: "60"
+      GPU_MEM_CRIT: "90"
       MARKDOWN: "on"
       UPLOAD_MAX_BYTES: "10485760"
       UPLOAD_MAX_FILES: "10"
