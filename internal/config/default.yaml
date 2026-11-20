@@ -26,7 +26,9 @@ dmr:
 welcome:
   title: ssh-llm-tui
   # Optional ASCII art. Read again every time the welcome screen is shown.
-  # Compose mounts ./welcome/banner.txt here. Leave empty to skip the art.
+  # The image includes banner.txt at /usr/share/ssh-llm-tui/banner.txt and
+  # sets WELCOME_BANNER_FILE to that path. Leave this empty to use that
+  # default. Edit banner.txt and rebuild to customise the art.
   banner_file: ""
   message: |
     Welcome. This session chats with local models on Docker Model Runner.

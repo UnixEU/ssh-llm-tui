@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.1
+
+- The welcome banner is copied into the image at build time from `banner.txt`. It no longer depends on a host bind mount. Edit `banner.txt` and rebuild to customise it. `WELCOME_MESSAGE` is still the fallback when the file is missing, empty, or does not fit the terminal.
+
 ## 1.3.0
 
 - The model can propose changes to uploaded files. With edit mode on (`EDIT_MODE`, default on while files are uploaded), the system prompt describes `SEARCH`/`REPLACE`, `WHOLE` and `DELETE` blocks, and each finished reply is scanned for them. Only the visible reply is read, never the reasoning.
