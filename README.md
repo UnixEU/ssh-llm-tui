@@ -2,7 +2,7 @@
 
 SSH terminal chat for local models served by [Docker Model Runner](https://docs.docker.com/ai/model-runner/) (DMR). Connect with `ssh -p 2222 user@host` and you get this app instead of a shell.
 
-Version 1.3.0. The interface is a terminal UI, built with Go and the Charm stack (Wish, Bubble Tea, Lip Gloss, Bubbles). Released under the MIT license. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
+Version 1.3.1. The interface is a terminal UI, built with Go and the Charm stack (Wish, Bubble Tea, Lip Gloss, Bubbles). Released under the MIT license. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
 
 The container talks to DMR only over HTTP. It does not mount the Docker socket and it does not call the `docker` CLI, so it cannot pull models or start containers.
 
@@ -14,7 +14,7 @@ Click a thumbnail to open the full-size image.
   <tr>
     <td align="center" width="50%">
       <a href="docs/screenshots/01-welcome.png"><img src="docs/screenshots/01-welcome-thumb.png" alt="Welcome screen" width="400"></a><br>
-      <sub><b>1. Welcome screen.</b> The banner comes from a mounted <code>welcome/banner.txt</code>. The GPU panel in the top right shows VRAM, temperature and power draw.</sub>
+      <sub><b>1. Welcome screen.</b> The banner comes from the <code>banner.txt</code> file built into the image. The GPU panel in the top right shows VRAM, temperature and power draw.</sub>
     </td>
     <td align="center" width="50%">
       <a href="docs/screenshots/02-model-picker.png"><img src="docs/screenshots/02-model-picker-thumb.png" alt="Model picker" width="400"></a><br>
@@ -67,7 +67,7 @@ Any username is accepted. With the default `AUTH_MODE=open` there is no password
 
 Screens:
 
-1. Welcome. The copy comes from the mounted YAML, or from `welcome/banner.txt` when that art fits. Press a key.
+1. Welcome. The copy comes from the mounted YAML, or from the built-in `banner.txt` when that art fits. Press a key.
 2. Model list. Names are shown without a `docker.io/` prefix (`ai/gpt-oss:20b`). Requests to DMR still use the full id.
 3. Context size (8k to 128k, capped by the model's trained context), then where to run it: all GPUs, one GPU, or the CPU. Each choice shows the estimated memory and whether it fits.
 4. Memory check. The estimate per GPU (or RAM), the free memory and the verdict. A model that does not fit is not loaded; the screen offers the largest context that fits, the CPU, or another model.
@@ -123,7 +123,7 @@ The window can be resized. Finished assistant replies are rendered again at the 
 | `WELCOME_TITLE` | `ssh-llm-tui` | welcome title when the banner is not shown |
 | `WELCOME_MESSAGE` | see YAML | welcome text when the banner is not shown |
 | `WELCOME_HINT` | press any key | line under the welcome text |
-| `WELCOME_BANNER_FILE` | empty in YAML, `/config/welcome/banner.txt` in compose | ASCII art, read on every welcome screen |
+| `WELCOME_BANNER_FILE` | empty in YAML, `/usr/share/ssh-llm-tui/banner.txt` in the image | ASCII art, read on every welcome screen |
 | `MODELS_TITLE`, `MODELS_EMPTY`, `MODELS_HINT`, `MODELS_LOADING` | see YAML | model list copy |
 | `LOADING_TITLE`, `LOADING_MESSAGE` | see YAML | warm screen. `{model}` is replaced with the friendly name |
 | `CHAT_TITLE`, `CHAT_PLACEHOLDER`, `SYSTEM_PROMPT`, `CHAT_YOU_LABEL` | see YAML | chat copy and the system prompt |
@@ -203,9 +203,9 @@ sudo chown 65532:65532 data/hostkeys
 
 ## Welcome banner
 
-`welcome/banner.txt` is mounted at `/config/welcome/banner.txt`. The welcome screen reads that file every time it is drawn, so edit the art and reconnect. The art is centered and coloured. Inner spaces are kept. Trailing blank lines are dropped. When the file is present and the art fits, the welcome screen shows that art, with the GPU panel at the top when stats are available. The title and `WELCOME_MESSAGE` are used when the file is missing, empty, or wider than the terminal. Compose leaves `WELCOME_MESSAGE` commented so a session with `banner.txt` stays on the art.
+`banner.txt` is copied into the image at `/usr/share/ssh-llm-tui/banner.txt`. The image and the compose file set `WELCOME_BANNER_FILE` to that path. Edit `banner.txt` and rebuild to customise the art. The welcome screen reads the file every time it is drawn. The art is centered and coloured. Inner spaces are kept. Trailing blank lines are dropped. When the file is present and the art fits, the welcome screen shows that art, with the GPU panel at the top when stats are available. The title and `WELCOME_MESSAGE` are used when the file is missing, empty, or wider than the terminal. Compose leaves `WELCOME_MESSAGE` commented so a session with `banner.txt` stays on the art.
 
-The compose file mounts the `welcome/` directory, not the single file. Editors that replace the inode (`vim` with `backupcopy=no`, `sed -i`) break a single-file bind mount. Inside the directory they are fine. If you mount the file itself, set `:set backupcopy=yes` in vim.
+To use a different file without rebuilding, point `WELCOME_BANNER_FILE` at it, or bind-mount a file over `/usr/share/ssh-llm-tui/banner.txt`. A commented example is in the compose file. Editors that replace the inode (`vim` with `backupcopy=no`, `sed -i`) can break a single-file bind mount; set `:set backupcopy=yes` in vim, or mount a directory instead.
 
 ## Uploads
 
@@ -441,7 +441,7 @@ A model list entry looks like `docker.io/ai/gpt-oss:20b` with an empty `dmr` obj
 go test ./...
 go vet ./...
 go test -race ./...
-docker build -t ssh-llm-tui:1.3.0 .
+docker build -t ssh-llm-tui:1.3.1 .
 ```
 
 Go 1.24 or newer. The module downloads a newer toolchain if the system Go is older.

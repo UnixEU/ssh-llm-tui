@@ -11,7 +11,7 @@ name: ssh-llm-tui
 services:
   ssh-llm-tui:
     build: .
-    image: ssh-llm-tui:1.3.0
+    image: ssh-llm-tui:1.3.1
     container_name: ssh-llm-tui
     init: true
     read_only: true
@@ -88,7 +88,9 @@ services:
       FILES_BOX_ROWS: "4"
       # VISION_MODELS: "ai/*vl*"
       # NON_VISION_MODELS: "ai/gpt-oss*"
-      WELCOME_BANNER_FILE: /config/welcome/banner.txt
+      # Banner is copied into the image at build time from banner.txt.
+      # Edit that file and rebuild to customise the art.
+      WELCOME_BANNER_FILE: /usr/share/ssh-llm-tui/banner.txt
       # Default. DMR is published on 127.0.0.1 and 172.17.0.1 only.
       # 127.0.0.1 inside this container is not the host.
       DMR_BASE_URL: http://host.docker.internal:12434
@@ -131,9 +133,8 @@ services:
       #   No models yet. Pull one on the host, then press r.
     volumes:
       - ./config.example.yaml:/config/config.yaml:ro
-      # Directory mount, not a single file. Editors that replace the inode
-      # (vim, sed -i) keep working. Edit welcome/banner.txt and reconnect.
-      - ./welcome:/config/welcome:ro
+      # Optional: use a custom banner without rebuilding the image.
+      # - ./banner.txt:/usr/share/ssh-llm-tui/banner.txt:ro
       - hostkeys:/data/hostkeys
       # Measured GPU usage per model (fallback for the memory check).
       - fitdata:/data/fit
