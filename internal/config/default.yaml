@@ -70,6 +70,12 @@ chat:
   placeholder: Message the model, then press enter
   system_prompt: You are a helpful assistant running locally via Docker Model Runner. Answer concisely.
   you_label: you
+  # Ask the backend for token counts for the context gauge (on/off).
+  context_usage: "on"
+  # Gauge turns orange at this share of the context; ctrl+x offers compress.
+  context_warn_pct: 80
+  # Exchanges kept verbatim when ctrl+x compresses the history.
+  compress_keep_turns: 2
 
 footer:
   change_model: ctrl+n change model
@@ -106,6 +112,25 @@ fit:
   # off keeps it in memory only.
   usage_path: /data/fit/usage.json
 
+hub:
+  # p on the model list searches Docker Hub and pulls models into DMR in
+  # the background, open to every user. off hides it.
+  pull: "on"
+  url: https://hub.docker.com
+  namespace: ai
+  # Hub listings are cached; anonymous clients are rate-limited.
+  cache_ttl: 30m
+  # off hides vLLM repos and MLX/safetensors tags, which the llama.cpp
+  # backend cannot run.
+  all_tags: "off"
+  # Pulls running at once (1 or 2). Others wait in the queue.
+  pull_concurrency: 1
+  # Bytes kept free on the model disk after the download and every queued
+  # one. A pull that does not fit is refused. 2 GiB.
+  pull_min_free: 2147483648
+  # Where free space is read. Empty uses fit.model_store_path.
+  models_dir: ""
+
 edit:
   # Changes proposed by the model to uploaded text files. Nothing is used
   # until it is accepted on the review screen (ctrl+e); uploads stay as
@@ -122,7 +147,7 @@ downloads:
   # Edited files, changes.patch and tar.gz archives, read-only for clients
   # (get and delete). Removed with the user's last TUI session.
   dir: /downloads
-  max_total_bytes: 209715200
+  max_total_bytes: 268435456
   archive: tar.gz
   # Host and port shown in the download commands. Empty host prints "host";
   # port 0 uses the SSH port.

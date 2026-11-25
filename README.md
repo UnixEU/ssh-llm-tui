@@ -2,7 +2,7 @@
 
 SSH terminal chat for local models served by [Docker Model Runner](https://docs.docker.com/ai/model-runner/) (DMR). Connect with `ssh -p 2222 user@host` and you get this app instead of a shell.
 
-Version 1.3.1. The interface is a terminal UI, built with Go and the Charm stack (Wish, Bubble Tea, Lip Gloss, Bubbles). Released under the MIT license. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
+Version 1.4.0. The interface is a terminal UI, built with Go and the Charm stack (Wish, Bubble Tea, Lip Gloss, Bubbles). Released under the MIT license. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
 
 The container talks to DMR only over HTTP. It does not mount the Docker socket and it does not call the `docker` CLI, so it cannot pull models or start containers.
 
@@ -92,11 +92,13 @@ A help bar sits on the last row of every screen. It wraps or shortens on a narro
 | `s` / `p` / `u` / `m` | memory check | use the largest context that fits / run on CPU / unload idle models and check again / back to the model list |
 | `ctrl+o` | chat | change context size or GPU/CPU for the current model |
 | `r` | model list | refresh |
+| `p` | model list | search Docker Hub and pull a model in the background. See Docker Hub models |
 | `ctrl+t` | chat | expand or collapse the latest reasoning block |
 | `ctrl+r` | chat | switch assistant replies between rendered Markdown and raw text |
 | `ctrl+n` | chat | unload runners and pick another model, even if other sessions are connected |
-| `ctrl+f` | chat | focus the file box. `j`/`k` and pgup/pgdn scroll it, space includes, `d` deletes one, `D` clears all after y/n, `esc` leaves the box |
-| `ctrl+e` | chat | open the review screen for file changes the model proposed. See Edits and downloads |
+| `ctrl+f` | chat | open the files screen: the upload tree and a preview. See Uploads |
+| `ctrl+x` | chat | context panel: size, tokens in use, last reply speed. `r` resets the history after y/n, `c` compresses it. See Context |
+| `ctrl+e` | chat | open the review screen for file changes the model proposed: file list and diff side by side, `d` toggles diff and whole file. See Edits and downloads |
 | `ctrl+c` | chat | cancel the reply in progress. It does not exit |
 | `pgup` / `pgdn`, `ctrl+u` / `ctrl+d` | chat | scroll |
 | `ctrl+q` | every screen | unload if this is the last session, then close SSH |
@@ -108,6 +110,8 @@ The window can be resized. Finished assistant replies are rendered again at the 
 ## Configuration
 
 `config.example.yaml` is the baked-in default and the file compose mounts at `/config/config.yaml`. Environment variables override the file. An empty variable does not override.
+
+Settings ending in `_BYTES` accept plain bytes (`10485760`) or a size with a binary unit: `512k`, `256M`, `256MiB`, `256MB`, `1G`, `1.5G`. `k`, `M`, `G` and `T` are powers of 1024, with or without `B` / `iB`, the same way Docker reads a tmpfs size.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -127,12 +131,16 @@ The window can be resized. Finished assistant replies are rendered again at the 
 | `MODELS_TITLE`, `MODELS_EMPTY`, `MODELS_HINT`, `MODELS_LOADING` | see YAML | model list copy |
 | `LOADING_TITLE`, `LOADING_MESSAGE` | see YAML | warm screen. `{model}` is replaced with the friendly name |
 | `CHAT_TITLE`, `CHAT_PLACEHOLDER`, `SYSTEM_PROMPT`, `CHAT_YOU_LABEL` | see YAML | chat copy and the system prompt |
+| `CONTEXT_USAGE` | `on` | ask the backend for token counts (`stream_options.include_usage`). `off` for backends that reject the field; llama.cpp timings still fill the gauge |
+| `CONTEXT_WARN_PCT` | `80` | the context gauge shows `⚠ ctrl+x` from this share of the context |
+| `COMPRESS_KEEP_TURNS` | `2` | exchanges kept verbatim when the history is compressed |
+| `COMPRESS_PROMPT` | built in | instruction the model gets to summarise older messages |
 | `MARKDOWN` | `on` | `on` renders finished assistant replies. `off` leaves them plain. `ctrl+r` toggles the session |
 | `FOOTER_CHANGE`, `FOOTER_EXIT`, `FOOTER_SCROLL` | see YAML | accepted and ignored. The help bar is drawn by the app |
 | `UPLOAD_DIR` | `/uploads` | on-disk root. Files live in `/uploads/<user>/<relative path>` |
-| `UPLOAD_MAX_BYTES` | `10485760` | per file (10 MiB) |
+| `UPLOAD_MAX_BYTES` | `10M` | per file (10 MiB) |
 | `UPLOAD_MAX_FILES` | `1000` | files per username. Directories are capped at the same number |
-| `UPLOAD_MAX_TOTAL_BYTES` | `209715200` | total size of all files per username (200 MiB) |
+| `UPLOAD_MAX_TOTAL_BYTES` | `256M` | total size of all files per username (256 MiB) |
 | `UPLOAD_IGNORE` | `.git,node_modules,.venv,__pycache__,.DS_Store` | comma-separated path component names. Anything at or under such a component is accepted and discarded. `none` turns it off |
 | `UPLOAD_AUTO_INCLUDE` | `20` | how many new files are included in the prompt automatically, within `CONTEXT_TOKEN_BUDGET` |
 | `EDIT_MODE` | `on` | `on`: while files are uploaded, the model is told how to propose changes and replies are scanned for them. `m` on the review screen toggles it per session. `off` turns the feature off |
@@ -141,18 +149,19 @@ The window can be resized. Finished assistant replies are rendered again at the 
 | `EDIT_ALLOW_NEW` | `true` | the model may create new files |
 | `EDIT_ALLOW_DELETE` | `false` | the model may propose deleting files |
 | `DOWNLOAD_DIR` | `/downloads` | on-disk root for exports, `/downloads/<user>/` |
-| `DOWNLOAD_MAX_TOTAL_BYTES` | `209715200` | total size of one user's downloads (200 MiB) |
+| `DOWNLOAD_MAX_TOTAL_BYTES` | `256M` | total size of one user's downloads (256 MiB) |
 | `DOWNLOAD_ARCHIVE` | `tar.gz` | archive format of `t`. Only `tar.gz` |
 | `PUBLIC_HOST` | empty | host name clients use to reach the server. Only used to print exact download commands; `host` when empty |
 | `PUBLIC_PORT` | `SSH_PORT` | port clients use, for the same commands |
 | `CONTEXT_TOKEN_BUDGET` | `8192` | rough byte/4 cap for included text. Once a context size is chosen, the cap is three quarters of it |
 | `IMAGE_MAX_PX` | `1536` | longest side after downscale |
-| `IMAGE_MAX_BYTES` | `2097152` | encoded image payload cap |
-| `FILES_BOX_ROWS` | `4` | file rows when the box is focused |
+| `IMAGE_MAX_BYTES` | `2M` | encoded image payload cap |
+| `FILES_BOX_ROWS` | `4` | accepted and ignored since 1.4.0. The files screen uses the full height |
 | `VISION_MODELS` | empty | comma-separated globs that force an image attempt |
 | `NON_VISION_MODELS` | empty | comma-separated globs that skip images |
 | `GPU_STATS` | `auto` | `auto` or `off` |
-| `GPU_POLL_INTERVAL` | `2s` | nvidia-smi poll |
+| `GPU_POLL_INTERVAL` | `2s` | nvidia-smi poll, also the CPU/RAM sample interval |
+| `SYS_STATS` | `on` | host CPU usage and RAM next to the GPU panel. `off` hides them |
 | `NVIDIA_SMI` | `nvidia-smi` | path to the binary |
 | `GPU_TEMP_WARN`, `GPU_TEMP_HOT`, `GPU_TEMP_CRIT` | `40`, `60`, `70` | °C colour bands |
 | `GPU_POWER_WARN`, `GPU_POWER_HOT`, `GPU_POWER_CRIT` | `25`, `100`, `200` | watt colour bands |
@@ -167,10 +176,40 @@ The window can be resized. Finished assistant replies are rendered again at the 
 | `KV_CACHE_TYPE` | empty (f16) | optional llama.cpp KV cache type, e.g. `q8_0`, sent as `--cache-type-k/v` |
 | `CPU_THREADS` | `0` | llama.cpp threads for the CPU target. `0` keeps the default |
 | `FIT_USAGE_PATH` | `/data/fit/usage.json` | measured GPU usage per model, context and target. `off` keeps it in memory |
+| `MODEL_PULL` | `on` | `p` on the model list: Docker Hub search and background pulls, for every user. `off` hides it |
+| `HUB_URL`, `HUB_NAMESPACE` | `https://hub.docker.com`, `ai` | Hub API and the namespace searched |
+| `HUB_CACHE_TTL` | `30m` | how long Hub listings are cached (anonymous clients are rate-limited) |
+| `HUB_ALL_TAGS` | `off` | `on` also lists vLLM repos and MLX/safetensors tags, which the llama.cpp backend cannot run |
+| `MODEL_PULL_CONCURRENCY` | `1` | pulls running at once, `1` or `2` (DMR runs at most two). The rest wait in the queue |
+| `MODEL_PULL_MIN_FREE` | `2G` | space kept free on the model disk after the download and all queued ones |
+| `MODEL_PULL_DIR` | `MODEL_STORE_PATH` | where the model disk's free space is read |
 
 With `FIT_CHECK=off`, `CONTEXT_SELECT=off`, `TARGET_SELECT=off` and no `KV_CACHE_TYPE`, model selection works as in 1.0.x: warm only, no configuration call.
 
 Warm, chat, and unload calls send the full model id from `GET /engines/v1/models`. The screen shows the name without a `docker.io/` prefix.
+
+### Upload and download space
+
+`/uploads` and `/downloads` are tmpfs mounts. A tmpfs lives in the host's RAM and only uses memory for what is stored, so an empty mount costs nothing. Both mounts are shared by all users; the `*_MAX_TOTAL_BYTES` limits apply per user inside them.
+
+Sizes come from a `.env` file next to `docker-compose.yml`, which compose reads automatically. Copy `.env.example` to `.env` and adjust:
+
+```bash
+cp .env.example .env
+# UPLOADS_TMPFS_SIZE=1g
+# UPLOAD_MAX_TOTAL_BYTES=512M
+docker compose up -d
+```
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `UPLOADS_TMPFS_SIZE` | `256m` | size of the `/uploads` tmpfs (compose only) |
+| `DOWNLOADS_TMPFS_SIZE` | `256m` | size of the `/downloads` tmpfs (compose only) |
+| `UPLOAD_MAX_TOTAL_BYTES` | `256M` | per-user upload total |
+| `DOWNLOAD_MAX_TOTAL_BYTES` | `256M` | per-user export total |
+| `UPLOAD_MAX_BYTES` | `10M` | largest single file |
+
+Size the tmpfs for the users who upload at the same time: two users at the full 256 MiB need a 512 MiB mount. At start the server logs a warning when a per-user limit is larger than the mount that holds it, for example `UPLOAD_MAX_TOTAL_BYTES is 1 GiB, but /uploads holds only 256 MiB`. Without compose, mount any directory and set the limits as usual.
 
 ### DMR base URL
 
@@ -225,11 +264,24 @@ Each path component is checked: `..`, absolute paths, empty components and contr
 
 Uploading a whole Git checkout is the intended use. Components listed in `UPLOAD_IGNORE` (default `.git`, `node_modules`, `.venv`, `__pycache__`, `.DS_Store`) are accepted, so `scp -r` does not stop, but their data is dropped and does not count toward the limits. The server logs one INFO line per ignored directory.
 
-Limits are per username: `UPLOAD_MAX_BYTES` per file (10 MiB), `UPLOAD_MAX_FILES` files (1000) and `UPLOAD_MAX_TOTAL_BYTES` in total (200 MiB). A file over a limit is refused on its own and logged at WARN with the name of the variable, for example `limit of 1000 files per user reached (UPLOAD_MAX_FILES)`. Files already stored stay as they are and a refused file never lands half written. In SFTP mode `scp` reports the failed file and goes on with the rest. The legacy protocol (`scp -O`) has no per-file error, so it stops at the first refused file.
+Limits are per username: `UPLOAD_MAX_BYTES` per file (10 MiB), `UPLOAD_MAX_FILES` files (1000) and `UPLOAD_MAX_TOTAL_BYTES` in total (256 MiB). A file over a limit is refused on its own and logged at WARN with the name of the variable, for example `limit of 1000 files per user reached (UPLOAD_MAX_FILES)`. Files already stored stay as they are and a refused file never lands half written. In SFTP mode `scp` reports the failed file and goes on with the rest. The legacy protocol (`scp -O`) has no per-file error, so it stops at the first refused file.
 
 FileZilla and WinSCP work over SFTP to port 2222. Plain text, Markdown, source, CSV, JSON, YAML, and logs are included as UTF-8. DOCX text is read from `word/document.xml`. PDF text is extracted with a pure-Go reader. A scanned PDF has no text layer, so the box shows that nothing could be extracted. There is no OCR.
 
-On the chat screen the file list is a full-width strip just above the input. Unfocused it is one line, `files: 7 (3 incl, ~2.1k/8.2kt, 2 img) — ctrl+f`: files, included files, the included token estimate against the context budget (`over` when it does not fit), and images. `ctrl+f` expands it to `FILES_BOX_ROWS` (default 4) single-line rows. Uploaded directories appear as tree rows (`folder/`, then its files indented) with `included/total` and the included tokens of everything below. A long name is cut with `…` and does not wrap. `j`/`k`, arrows, pgup and pgdn scroll the list, `g`/`G` (or home/end) jump to the top or bottom. `esc` or `ctrl+f` leaves the list. Space toggles include on a file, or on every file under the selected directory (all on, or all off when all were on). `d` removes the selected file or directory tree, `D` clears every file after a y/n confirm. The `scp` hint and the token gauge sit on the title line of the open box.
+On the chat screen one line above the input sums up the uploads: `files: 7 (3 incl, ~2.1k/8.2kt, 2 img) — ctrl+f`: files, included files, the included token estimate against the context budget (`over` when it does not fit), and images.
+
+`ctrl+f` opens the files screen. The header line shows the space used against `UPLOAD_MAX_TOTAL_BYTES`, the prompt gauge and the `scp` command. The left pane is the upload tree: directory rows (`folder/`, then its files indented) with `included/total` and the included tokens of everything below, file rows with size and tokens, `img` and the sent size for images, `!` for a file with a note and `●` for a file changed in the edits. The right pane previews the selected file with line numbers (the edited version when it was changed), an image's size, or a folder's totals. On a terminal narrower than 72 columns one pane is shown at a time.
+
+| Key | Action |
+| --- | --- |
+| `j`/`k`, arrows, pgup/pgdn, `g`/`G` | move in the list, or scroll the preview |
+| `tab`, enter, `l`/`h` | switch between the list and the preview |
+| space | include or exclude a file, or every file under a directory (all on, or all off when all were on) |
+| `a` / `n` | include / exclude every file |
+| `d` | remove the selected file or directory tree |
+| `D` | remove every file and the edits after a y/n confirm |
+| `e` | open the review screen (`ctrl+e`) at the selected file |
+| `esc`, `ctrl+f` | back to the chat |
 
 New uploads are included automatically until `UPLOAD_AUTO_INCLUDE` (default 20) files are included or the included text would pass `CONTEXT_TOKEN_BUDGET`. The first file is always included. After that, new files arrive excluded (`✗`), so a large tree does not flood the prompt; include the directories you need with space. Included files are sent in path order. When they do not all fit the budget, the first file that does not fit is cut, and the prompt ends with a note naming the files that were left out. The prompt lists included files by their relative path.
 
@@ -241,7 +293,7 @@ DMR's model list does not say whether a model can see images. This app still tri
 
 llama.cpp accepts images when that model was loaded with an mmproj (a vision projector). `docker model inspect <model>` is the check: look for an mmproj file, a vision projector, or a VL / vision tag. A text quant such as `ai/qwen3.8:27b-q4_K_M` needs that projector in the model card. `ai/gpt-oss:20b` is a text model. vLLM vision models use the same `/engines/v1` path when DMR routes them there.
 
-Bytes are stored under `UPLOAD_DIR` (default `/uploads/<user>/`), which compose mounts as a tmpfs (512 MiB, only what is stored uses RAM). The directory is emptied when the process starts and when that user's last TUI session ends. Open the TUI first, upload, and work with the files in that session.
+Bytes are stored under `UPLOAD_DIR` (default `/uploads/<user>/`), which compose mounts as a tmpfs of `UPLOADS_TMPFS_SIZE` (default 256 MiB). See [Upload and download space](#upload-and-download-space). The directory is emptied when the process starts and when that user's last TUI session ends. Open the TUI first, upload, and work with the files in that session.
 
 ## Edits and downloads
 
@@ -272,12 +324,15 @@ FILE: old.txt
 - `DELETE` is refused unless `EDIT_ALLOW_DELETE=true`.
 - Blocks may sit inside code fences. Paths go through the same checks as uploads. Only text files are edited; images, PDF and DOCX are refused. A changed file must stay under `UPLOAD_MAX_BYTES`, and a reply may change at most `EDIT_MAX_FILES` files.
 
-After a reply, a note in the chat sums up the proposal, for example `Proposed changes to 2 files (1 new); 1 block could not be applied`. `ctrl+e` opens the review screen:
+After a reply, a note in the chat sums up the proposal, for example `Proposed changes to 2 files (1 new); 1 block could not be applied`. `ctrl+e` opens the review screen. The left pane lists the changed files; the right pane shows the coloured diff of the selected one, from the uploaded original to the newest version (the pending proposal, or the accepted version). The download commands are below. Narrow terminals show one pane at a time.
 
 | Key | Action |
 | --- | --- |
-| ↑/↓, `j`/`k`, `g`/`G` | select a file |
-| enter | show the coloured diff. `j`/`k`, pgup/pgdn scroll, `n`/`p` next and previous file, `esc` back to the list |
+| ↑/↓, `j`/`k`, `g`/`G`, `n`/`p` | select a file |
+| `d` (or `ctrl+r`) | switch the right pane between the diff and the whole file with line numbers, like `ctrl+r` switches raw and rendered replies in the chat |
+| `b` | for a pending change to a file that was already changed: diff against the accepted version instead of the upload, to see only what the new proposal changes |
+| tab, enter | move to the right pane and back. There `j`/`k` scroll; pgup/pgdn scroll in either pane |
+| `]` / `[` | next or previous hunk |
 | `a` / `r` | accept or reject the selected change |
 | `A` / `R` | accept or reject all pending changes |
 | `u` | undo the last accepted change of the file (it goes back to pending) |
@@ -286,7 +341,7 @@ After a reply, a note in the chat sums up the proposal, for example `Proposed ch
 | `x` | export the changed and new files plus `changes.patch` to `downloads/` |
 | `t` | export the whole uploaded folder with all accepted changes merged, as one `.tar.gz` |
 | `m` | turn edit mode off or on for this session |
-| `esc`, `ctrl+e` | back to the chat |
+| `esc`, `ctrl+e`, `q` | back to the chat (`esc` in the right pane goes back to the list first) |
 
 A newer proposal for a file replaces an older one that is still pending. Accepting a change that was built on an older version of the file is refused; ask again.
 
@@ -306,7 +361,7 @@ scp -P 2222 -O -r user@host:downloads .        # legacy scp protocol
 sftp -P 2222 user@host                          # then: get -r downloads
 ```
 
-Clients can read and delete in `downloads/`, but not write, create directories or rename. Downloads are wiped exactly like uploads: when the process starts and when that user's last TUI session ends, so download before you close the TUI. The edit workspace lives in memory and ends with it. `DOWNLOAD_MAX_TOTAL_BYTES` caps one user's exports; compose mounts `/downloads` as a 512 MiB tmpfs.
+Clients can read and delete in `downloads/`, but not write, create directories or rename. Downloads are wiped exactly like uploads: when the process starts and when that user's last TUI session ends, so download before you close the TUI. The edit workspace lives in memory and ends with it. `DOWNLOAD_MAX_TOTAL_BYTES` caps one user's exports; compose mounts `/downloads` as a tmpfs of `DOWNLOADS_TMPFS_SIZE` (default 256 MiB).
 
 Small models follow the format less reliably, and larger edits need context: raise `CONTEXT_TOKEN_BUDGET` and pick a larger context size so the model sees whole files. Tool calling is not used yet; DMR vision models often lack it, and the text blocks work with any chat model. `EDIT_PROTOCOL` is there to add it later.
 
@@ -322,9 +377,47 @@ Each GPU is a column of four rows: the name in the terminal's default text colou
 | Power | < 50W | 50–75 | 75–150 | ≥ 150 |
 | VRAM used | < 25% | 25–50 | 50–75 | ≥ 75 |
 
+A `System` column sits in front of the GPUs with two host figures: total CPU usage (`CPU 48%`, all cores together) and RAM used out of the total (`RAM 32/126 GiB`, used is total minus available). They come from `/proc/stat` and `/proc/meminfo`, which a container without memory limits reads from the host, so they cover the whole machine, including a model running on the CPU. Both use the VRAM colour bands. CPU shows `…` until the second sample. `SYS_STATS=off` hides the column; with `GPU_STATS=off` and `SYS_STATS=on` only the system figures are shown. On Docker Desktop the figures are for its VM.
+
 `50–60` means 50 ≤ t < 60, and the same pattern for the other open ends. The VRAM row looks like `18583/20475 MiB 91%`. nvidia-smi temperature can be a fraction (`60.06`). The panel rounds the number and colours the raw value.
 
 The runtime image is Debian (glibc) so the NVIDIA toolkit can inject `nvidia-smi`. `utility` is statistics only. It does not take the GPU away from Docker Model Runner. After changing compose, recreate the container.
+
+## Context
+
+The chat title shows how much of the model's context the conversation uses: `ai/gpt-oss:20b · ctx 12.4k/32k 38% · GPU`. The size is the one chosen with the context picker, otherwise the size configured in DMR (`GET /engines/_configure`), otherwise the model's maximum from the model list, otherwise `?`. The count after each reply is the backend's own (`usage.prompt_tokens + completion_tokens`, or llama.cpp `timings`). A `~` marks an estimate (about four bytes per token) for text added since the last reply, or before the first one. From `CONTEXT_WARN_PCT` (80%) the gauge adds `⚠ ctrl+x`.
+
+`ctrl+x` opens the context panel: size and where it comes from, tokens in use with a bar, the last reply (prompt, cached prompt, reply tokens, tokens per second) and an estimate per part (system prompt, files, chat, summary).
+
+- `r` resets the chat history after a y/n confirm. Uploaded files and the edit workspace stay.
+- `c` compresses. The model gets the older messages with `COMPRESS_PROMPT` and writes a summary. The last `COMPRESS_KEEP_TURNS` exchanges (2) stay as they are. The summary replaces the older messages, is shown in the chat as a note, and is sent with the system prompt from then on. Compressing again folds the previous summary in. `ctrl+c` cancels it.
+
+Included files are sent with every message and are not compressed. Exclude files with `ctrl+f` to free context. When the backend refuses a request that no longer fits (llama.cpp `exceed_context_size_error`), the chat says so and points to `ctrl+x` and `ctrl+o`.
+
+## Docker Hub models
+
+`p` on the model list opens the Docker Hub screen. Type to search the `ai/` namespace (name and description, most pulled first), enter moves to the results, enter on a repository lists its tags with their download size; tags already pulled are marked `✓ pulled`. Only GGUF builds are listed unless `HUB_ALL_TAGS=on`.
+
+Enter on a tag opens the space check before anything is downloaded:
+
+```text
+Pull ai/qwen3:8b-q8_0
+
+  Download size        8.1 GiB
+  Queued pulls         4.7 GiB
+  Kept free            2 GiB
+  Needed               14.8 GiB
+  Free on model disk   50 GiB
+
+Enough space.
+y queues the pull · n cancels
+```
+
+The size is the tag's size on the Hub. Free space is read from the filesystem behind `MODEL_STORE_PATH` (the read-only mount of DMR's model store, so the disk where the model ends up). When the download, what queued pulls still need and `MODEL_PULL_MIN_FREE` do not fit, the pull is refused with the shortfall. Without `MODEL_STORE_PATH` the free space is unknown; the screen says so and `y` pulls anyway.
+
+`y` queues the pull. It runs in the background through DMR's `POST /models/create`, keeps going when you leave the screen or disconnect, and the queue is shared: everyone sees all pulls with a progress bar, size, speed and who started them. `tab` reaches the downloads; `c` cancels your own pull. The model list shows how many pulls are running; refresh it with `r` once one is done. Pulls are open to every user who can log in. Set `MODEL_PULL=off` to hide them.
+
+The container needs outbound HTTPS to `hub.docker.com` for the search. DMR downloads the model itself.
 
 ## Markdown
 
@@ -419,7 +512,8 @@ A model list entry looks like `docker.io/ai/gpt-oss:20b` with an empty `dmr` obj
 
 - `AUTH_MODE=open` belongs on a trusted LAN. Do not publish port 2222 on the public internet in open mode. Use `AUTH_MODE=keys` beyond that LAN.
 - No Docker socket, no `docker` CLI, and no shell in the session. Context size and GPU/CPU placement use DMR's HTTP API, whose runtime flags DMR checks against its own allowlist.
-- The optional model store mount is read-only. The app only reads GGUF headers and the store index from it.
+- The optional model store mount is read-only. The app only reads GGUF headers and the store index from it, and its free space for the pull check.
+- Model pulls (`p`, on by default for every user) go through DMR's HTTP API, not the Docker socket. The Hub is read anonymously over HTTPS. Anyone who can log in can fill the model disk up to `MODEL_PULL_MIN_FREE`; set `MODEL_PULL=off` where that is not wanted.
 - Chat text is sent only to DMR. The server log records connections and model ids, not message bodies.
 - The image runs as non-root (uid 65532), read-only, with all capabilities dropped and `no-new-privileges`.
 - Do not commit host keys or `authorized_keys`.
@@ -441,7 +535,7 @@ A model list entry looks like `docker.io/ai/gpt-oss:20b` with an empty `dmr` obj
 go test ./...
 go vet ./...
 go test -race ./...
-docker build -t ssh-llm-tui:1.3.1 .
+docker build -t ssh-llm-tui:1.4.0 .
 ```
 
 Go 1.24 or newer. The module downloads a newer toolchain if the system Go is older.

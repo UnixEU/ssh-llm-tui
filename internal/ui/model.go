@@ -7,13 +7,17 @@ import (
 	"time"
 
 	"github.com/UnixEU/ssh-llm-tui/internal/config"
+	"github.com/UnixEU/ssh-llm-tui/internal/diskspace"
 	"github.com/UnixEU/ssh-llm-tui/internal/dmr"
 	"github.com/UnixEU/ssh-llm-tui/internal/downloads"
 	"github.com/UnixEU/ssh-llm-tui/internal/edits"
 	"github.com/UnixEU/ssh-llm-tui/internal/fit"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpu"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpuinfo"
+	"github.com/UnixEU/ssh-llm-tui/internal/hub"
+	"github.com/UnixEU/ssh-llm-tui/internal/pull"
 	"github.com/UnixEU/ssh-llm-tui/internal/sysmem"
+	"github.com/UnixEU/ssh-llm-tui/internal/sysstat"
 	"github.com/UnixEU/ssh-llm-tui/internal/think"
 	"github.com/UnixEU/ssh-llm-tui/internal/uploads"
 	"github.com/charmbracelet/bubbles/list"
@@ -36,6 +40,9 @@ const (
 	screenTarget
 	screenFit
 	screenChanges
+	screenCtxInfo
+	screenFiles
+	screenHub
 )
 
 type loadKind int
@@ -80,8 +87,10 @@ type Options struct {
 	// Downloads receives exported changes. Nil disables export.
 	Downloads *downloads.Store
 	// Edits holds the per-user edited versions. Nil disables edit mode.
-	Edits    *edits.Manager
-	GPU      *gpuinfo.Poller
+	Edits *edits.Manager
+	GPU   *gpuinfo.Poller
+	// Sys samples host CPU and RAM for the panel. Nil hides them.
+	Sys      *sysstat.Poller
 	Unloader SoleUnloader
 	Budget   int
 	// Resolver reads model headers for the fit check. Nil disables it.
@@ -90,6 +99,13 @@ type Options struct {
 	Learned *fit.Learned
 	// ReadRAM reads system memory for the CPU target.
 	ReadRAM func() (sysmem.Info, error)
+	// Hub searches Docker Hub and Pulls runs the shared download queue.
+	// Either nil hides the search.
+	Hub   *hub.Client
+	Pulls *pull.Manager
+	// DiskFree reads the model disk; defaults to the filesystem holding
+	// the configured models directory.
+	DiskFree func() (diskspace.Info, error)
 }
 
 // Model is the bubbletea application for one SSH session.
@@ -106,6 +122,7 @@ type Model struct {
 	edits     *edits.Manager
 	protocol  edits.Protocol
 	gpu       *gpuinfo.Poller
+	sys       *sysstat.Poller
 	unloader  SoleUnloader
 	budget    int
 	// baseBudget is CONTEXT_TOKEN_BUDGET, used until a context is chosen.
@@ -113,6 +130,10 @@ type Model struct {
 	resolver   *fit.Resolver
 	learned    *fit.Learned
 	readRAM    func() (sysmem.Info, error)
+	hubc       *hub.Client
+	pulls      *pull.Manager
+	diskFree   func() (diskspace.Info, error)
+	hub        *hubState
 	fit        *fitState
 	ctxSize    int
 	target     fit.Target
@@ -138,10 +159,12 @@ type Model struct {
 	streaming     bool
 	markdown      bool
 	fetching      bool
-	filesFocus    bool
 	fileConfirm   bool
 	fileSel       string
 	fileTop       int
+	fileRight     bool
+	previewTop    int
+	paneRows      int
 	noVision      map[string]bool
 	skipImages    bool
 	imageRetried  bool
@@ -151,16 +174,29 @@ type Model struct {
 	status        string
 	errText       string
 
+	// Context gauge and the ctrl+x panel.
+	ctxDetected  int
+	usage        *dmr.Usage
+	pendingUsage *dmr.Usage
+	usageTurns   int
+	summary      string
+	compressing  bool
+	ctxConfirm   bool
+	ctxNote      string
+
 	// Edit review state.
-	editOn    bool
-	seen      map[string]bool
-	chPath    string
-	chDiff    bool
-	chTop     int
-	chNote    string
-	exporting bool
-	exported  bool
-	archive   string
+	editOn           bool
+	seen             map[string]bool
+	chPath           string
+	chFocus          bool
+	chFileView       bool
+	chAgainstCurrent bool
+	chTop            int
+	chListTop        int
+	chNote           string
+	exporting        bool
+	exported         bool
+	archive          string
 
 	gen    int
 	cancel context.CancelFunc
@@ -208,7 +244,7 @@ func New(opts Options) *Model {
 		opts.User = "guest"
 	}
 	if strings.TrimSpace(opts.Version) == "" {
-		opts.Version = "1.3.1"
+		opts.Version = "1.4.0"
 	}
 	if opts.Budget <= 0 {
 		opts.Budget = uploads.DefaultBudget
@@ -257,11 +293,15 @@ func New(opts Options) *Model {
 		protocol:  edits.Blocks{},
 		editOn:    opts.Config.EditOn(),
 		gpu:       opts.GPU,
+		sys:       opts.Sys,
 		unloader:  opts.Unloader,
 		budget:    opts.Budget,
 		resolver:  opts.Resolver,
 		learned:   opts.Learned,
 		readRAM:   opts.ReadRAM,
+		hubc:      opts.Hub,
+		pulls:     opts.Pulls,
+		diskFree:  opts.DiskFree,
 
 		baseBudget: opts.Budget,
 		markdown:   opts.Config.MarkdownOn(),
@@ -326,6 +366,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onFreed(msg)
 	case exportMsg:
 		return m.onExport(msg)
+	case ctxSizeMsg:
+		return m.onCtxSize(msg)
+	case compressMsg:
+		return m.onCompress(msg)
+	case hubReposMsg:
+		return m.onHubRepos(msg)
+	case hubTagsMsg:
+		return m.onHubTags(msg)
+	case hubTickMsg:
+		return m.onHubTick()
 	default:
 		return m, nil
 	}
@@ -362,6 +412,12 @@ func (m *Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.onFitKey(msg)
 	case screenChanges:
 		return m.onChangesKey(msg)
+	case screenCtxInfo:
+		return m.onCtxPanelKey(msg)
+	case screenFiles:
+		return m.onFilesKey(msg)
+	case screenHub:
+		return m.onHubKey(msg)
 	default:
 		return m, nil
 	}
@@ -387,6 +443,10 @@ func (m *Model) onModelsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			break
 		}
 		return m, m.startFetch()
+	case "p":
+		if !filtering && m.hubReady() {
+			return m.openHub()
+		}
 	case "enter":
 		if m.fetching || len(m.models) == 0 {
 			return m, nil
@@ -404,11 +464,6 @@ func (m *Model) onModelsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) onChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		if m.filesFocus {
-			m.filesFocus = false
-			m.fileConfirm = false
-			return m, nil
-		}
 		return m.backToWelcome()
 	case "ctrl+n":
 		return m.changeModel()
@@ -423,92 +478,22 @@ func (m *Model) onChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+e":
 		return m.openChanges()
+	case "ctrl+x":
+		return m.openCtxPanel()
 	case "ctrl+r":
 		m.markdown = !m.markdown
 		m.syncTranscript(m.viewport.AtBottom())
 		return m, nil
 	case "ctrl+f":
-		m.filesFocus = !m.filesFocus
-		m.fileConfirm = false
-		m.ensureFileSel()
-		return m, nil
-	case "D", "x":
-		if m.filesFocus && !m.fileConfirm {
-			m.fileConfirm = true
-			return m, nil
-		}
-		return m.passInput(msg)
-	case "y", "Y":
-		if m.filesFocus && m.fileConfirm {
-			if m.files != nil {
-				_ = m.files.Clear(m.user)
-			}
-			if m.edits != nil {
-				m.edits.Clear(m.user)
-			}
-			m.fileConfirm = false
-			m.fileSel = ""
-			return m, nil
-		}
-		return m.passInput(msg)
-	case "n", "N":
-		if m.filesFocus && m.fileConfirm {
-			m.fileConfirm = false
-			return m, nil
-		}
-		return m.passInput(msg)
-	case "up", "k":
-		if m.filesFocus {
-			m.moveFile(-1)
-			return m, nil
-		}
-		return m.passInput(msg)
-	case "down", "j":
-		if m.filesFocus {
-			m.moveFile(1)
-			return m, nil
-		}
-		return m.passInput(msg)
-	case " ":
-		if m.filesFocus {
-			m.toggleSelectedFile()
-			return m, nil
-		}
-		return m.passInput(msg)
-	case "d":
-		if m.filesFocus {
-			m.removeSelectedFile()
-			return m, nil
-		}
-		return m.passInput(msg)
-	case "home", "g":
-		if m.filesFocus {
-			m.jumpFile(-1)
-			return m, nil
-		}
-		return m.passInput(msg)
-	case "end", "G":
-		if m.filesFocus {
-			m.jumpFile(1)
-			return m, nil
-		}
-		return m.passInput(msg)
+		return m.openFiles()
 	case "pgup", "ctrl+u":
-		if m.filesFocus {
-			m.pageFiles(-1)
-			return m, nil
-		}
 		m.viewport.ScrollUp(scrollStep(m.viewport.Height))
 		return m, nil
 	case "pgdown", "ctrl+d":
-		if m.filesFocus {
-			m.pageFiles(1)
-			return m, nil
-		}
 		m.viewport.ScrollDown(scrollStep(m.viewport.Height))
 		return m, nil
 	case "enter":
-		if m.filesFocus || m.streaming {
+		if m.streaming {
 			return m, nil
 		}
 		return m.submit()
@@ -567,13 +552,21 @@ func (m *Model) onWarm(msg warmMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) enterChat(model, note string) (tea.Model, tea.Cmd) {
-	m.modelID = model
 	m.fit = nil
 	m.errText = ""
 	m.status = ""
 	m.screen = screenChat
+	if model != m.modelID {
+		m.usage = nil
+		m.pendingUsage = nil
+	}
+	m.modelID = model
+	m.ctxDetected = 0
 	m.turns = append(m.turns, turn{role: roleNote, content: note})
 	m.syncTranscript(true)
+	if m.ctxSize == 0 {
+		return m, tea.Batch(m.input.Focus(), m.fetchCtxSize(model))
+	}
 	return m, m.input.Focus()
 }
 
@@ -608,6 +601,7 @@ func (m *Model) onStream(msg streamMsg) (tea.Model, tea.Cmd) {
 		m.finishStream(msg.ev.Err)
 		return m, nil
 	}
+	m.absorbUsage(msg.ev.Usage)
 	m.absorb(msg.ev.Content, msg.ev.Reasoning)
 	m.syncTranscript(m.viewport.AtBottom())
 	return m, waitStream(msg.gen, msg.ch)
@@ -762,7 +756,14 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 
 func (m *Model) apiMessages() []dmr.Message {
 	out := make([]dmr.Message, 0, len(m.turns)+1)
-	if sys := m.systemPrompt(); sys != "" {
+	sys := m.systemPrompt()
+	if sum := strings.TrimSpace(m.summary); sum != "" {
+		if sys != "" {
+			sys += "\n\n"
+		}
+		sys += "Summary of the earlier conversation:\n" + sum
+	}
+	if sys != "" {
 		out = append(out, dmr.Message{Role: "system", Content: sys})
 	}
 	if m.files != nil {
@@ -895,7 +896,6 @@ func (m *Model) backToWelcome() (tea.Model, tea.Cmd) {
 	if m.streaming {
 		m.finishStream(context.Canceled)
 	}
-	m.filesFocus = false
 	m.screen = screenLoading
 	m.loadKind = loadUnload
 	m.status = "Unloading models…"
@@ -917,7 +917,6 @@ func (m *Model) onHome(msg homeMsg) (tea.Model, tea.Cmd) {
 	m.turns = nil
 	m.resetLiveReply()
 	m.errText = ""
-	m.filesFocus = false
 	switch {
 	case msg.err != nil:
 		m.errText = oneLine(msg.err)
@@ -947,6 +946,9 @@ func (m *Model) revealFile(index, n int) {
 }
 
 func (m *Model) filesBoxRows() int {
+	if m.screen == screenFiles && m.paneRows > 0 {
+		return m.paneRows
+	}
 	n := m.cfg.Uploads.FilesBoxRows
 	if n < 1 {
 		return 4
@@ -966,10 +968,19 @@ func waitStream(gen int, ch <-chan dmr.StreamEvent) tea.Cmd {
 
 func (m *Model) finishStream(err error) {
 	m.streaming = false
+	m.compressing = false
 	m.commitPartial()
+	if err == nil {
+		m.commitUsage()
+	} else {
+		m.pendingUsage = nil
+	}
 	m.status = ""
 	if err != nil && !errors.Is(err, context.Canceled) {
 		m.errText = oneLine(err)
+		if dmr.ContextError(err) {
+			m.errText = "The conversation no longer fits the context. ctrl+x to compress or reset, or ctrl+o for a larger context. " + m.errText
+		}
 	} else if err == nil && m.files != nil && len(m.pendingImages) > 0 {
 		m.files.MarkSent(m.user, m.pendingImages)
 		m.pendingImages = nil

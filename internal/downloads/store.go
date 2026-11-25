@@ -20,7 +20,7 @@ import (
 )
 
 // DefaultMaxTotalBytes caps one user's downloads (files, patch, archives).
-const DefaultMaxTotalBytes = 200 << 20
+const DefaultMaxTotalBytes = 256 << 20
 
 // ErrReadOnly is returned for client writes into downloads.
 var ErrReadOnly = fmt.Errorf("downloads are read-only: %w", fs.ErrPermission)

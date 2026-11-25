@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.4.0
+
+### Upload and download space
+
+- `/uploads` and `/downloads` tmpfs sizes come from `UPLOADS_TMPFS_SIZE` and `DOWNLOADS_TMPFS_SIZE` (default `256m` each, was a fixed 512 MiB) in a compose `.env` file. See `.env.example`. tmpfs lives in host RAM and only uses what is stored.
+- `UPLOAD_MAX_TOTAL_BYTES` and `DOWNLOAD_MAX_TOTAL_BYTES` default to 256 MiB per user (was 200 MiB). `UPLOAD_MAX_BYTES` stays 10 MiB per file.
+- Every `*_BYTES` setting accepts sizes with a binary unit (`512k`, `256M`, `256MiB`, `1G`, `1.5G`) as well as plain bytes.
+- At start the server warns when a per-user limit is larger than the filesystem that holds it.
+
+### CPU and RAM in the panel
+
+- The top-right panel shows a `System` column in front of the GPUs: total host CPU usage (`CPU 48%`) and RAM used out of the total (`RAM 32/126 GiB`), read from `/proc`. Coloured with the VRAM bands. `SYS_STATS=off` hides it.
+
+### Context
+
+- The chat title shows the context in use against the context size, for example `ctx 12.4k/32k 38%`. Counts come from the backend after each reply (`stream_options.include_usage`, or llama.cpp `timings`); `~` marks an estimate. The size is the chosen one, else the one configured in DMR, else the model maximum.
+- `ctrl+x` opens a context panel with the size, tokens in use, the last reply's prompt, cached and reply tokens and speed, and an estimate per part. `r` resets the chat history (files stay) after y/n. `c` compresses: the model summarises older messages, the last `COMPRESS_KEEP_TURNS` exchanges stay, and the summary is sent with the system prompt.
+- A request that no longer fits the context gets a hint to compress, reset or pick a larger context.
+- New settings: `CONTEXT_USAGE`, `CONTEXT_WARN_PCT`, `COMPRESS_KEEP_TURNS`, `COMPRESS_PROMPT`.
+
+### Files screen
+
+- `ctrl+f` opens a full-screen files view instead of a few rows above the input. The left pane is the upload tree with sizes, tokens, include marks and edit marks; the right pane previews the selected file with line numbers (the edited version when it was changed), or an image's size, or a folder's totals. The header shows the space used against the per-user limit and the `scp` command.
+- Keys: space include, `a`/`n` include or exclude all, `d` remove, `D` clear all after y/n, `tab` or enter switches panes, `e` opens the review screen at the selected file, `esc` back. Narrow terminals show one pane at a time.
+- The chat keeps the one-line files summary. `FILES_BOX_ROWS` is ignored.
+
+### Review screen
+
+- `ctrl+e` uses the same two panes: changed files on the left, the diff of the selected file on the right, the download commands below.
+- The diff compares the uploaded original with the newest version, so it shows everything that changed, accepted or not. `b` diffs a pending proposal against the accepted version instead.
+- `d` (or `ctrl+r`) switches between the diff and the whole file with line numbers. `]`/`[` jump between hunks, tab or enter moves to the right pane to scroll.
+
+### Docker Hub models
+
+- `p` on the model list opens a Docker Hub screen: search the `ai/` namespace, list a repository's tags with their download size, and pull one into DMR. Pulled tags are marked. vLLM repos and MLX/safetensors tags are hidden (`HUB_ALL_TAGS=on` shows them).
+- Before a pull the screen shows the download size, what queued pulls still need, the reserve (`MODEL_PULL_MIN_FREE`, 2 GiB) and the free space on the model disk (the filesystem behind `MODEL_STORE_PATH`). A pull that does not fit is refused.
+- Pulls run in the background through `POST /models/create`, one at a time by default (`MODEL_PULL_CONCURRENCY`, up to 2), and keep going after the session ends. The queue is shared by all sessions with progress bars, speed and who started each pull; `c` cancels your own. Open to every user; `MODEL_PULL=off` hides it.
+- New settings: `MODEL_PULL`, `HUB_URL`, `HUB_NAMESPACE`, `HUB_CACHE_TTL`, `HUB_ALL_TAGS`, `MODEL_PULL_CONCURRENCY`, `MODEL_PULL_MIN_FREE`, `MODEL_PULL_DIR`.
+
 ## 1.3.1
 
 - The welcome banner is copied into the image at build time from `banner.txt`. It no longer depends on a host bind mount. Edit `banner.txt` and rebuild to customise it. `WELCOME_MESSAGE` is still the fallback when the file is missing, empty, or does not fit the terminal.

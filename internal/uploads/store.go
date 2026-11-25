@@ -21,7 +21,7 @@ import (
 const (
 	DefaultMaxBytes      = 10 << 20
 	DefaultMaxFiles      = 1000
-	DefaultMaxTotalBytes = 200 << 20
+	DefaultMaxTotalBytes = 256 << 20
 	DefaultBudget        = 8192
 	// DefaultAutoInclude is how many files are switched into the prompt
 	// automatically. Later uploads arrive excluded.
@@ -153,6 +153,13 @@ func (s *Store) SetMaxTotalBytes(n int64) {
 	if n > 0 {
 		s.maxTotal = n
 	}
+}
+
+// MaxTotalBytes is the per-user total limit.
+func (s *Store) MaxTotalBytes() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.maxTotal
 }
 
 // SetIgnore replaces the ignored component names. Paths with one of these

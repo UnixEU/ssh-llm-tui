@@ -67,7 +67,35 @@ type Config struct {
 	Downloads Downloads `yaml:"downloads"`
 	GPU       GPU       `yaml:"gpu"`
 	Fit       Fit       `yaml:"fit"`
+	Hub       Hub       `yaml:"hub"`
 }
+
+// Hub is the Docker Hub model search and the background pulls.
+type Hub struct {
+	// Pull is on or off: p on the model list searches the Hub and pulls
+	// models into DMR. Open to every user.
+	Pull string `yaml:"pull"`
+	// URL is the Hub API origin.
+	URL string `yaml:"url"`
+	// Namespace is the Hub namespace searched, "ai" by default.
+	Namespace string `yaml:"namespace"`
+	// CacheTTL keeps Hub listings this long; the Hub rate-limits anonymous
+	// clients.
+	CacheTTL Duration `yaml:"cache_ttl"`
+	// AllTags is on or off: off hides repos and tags the llama.cpp
+	// backend cannot run (vLLM, MLX, safetensors).
+	AllTags string `yaml:"all_tags"`
+	// Concurrency is how many pulls run at once (1-2; DMR runs at most 2).
+	Concurrency int `yaml:"pull_concurrency"`
+	// MinFree is kept free on the model disk after all queued pulls.
+	MinFree int64 `yaml:"pull_min_free"`
+	// ModelsDir is where the free space is read; defaults to
+	// MODEL_STORE_PATH.
+	ModelsDir string `yaml:"models_dir"`
+}
+
+// PullOn reports whether the Hub search and pulls are enabled.
+func (c Config) PullOn() bool { return c.Hub.Pull != "off" }
 
 // Fit controls the memory check before a model loads, and the context and
 // placement pickers.
@@ -210,7 +238,13 @@ type GPU struct {
 	MemWarn   float64  `yaml:"mem_warn"`
 	MemHot    float64  `yaml:"mem_hot"`
 	MemCrit   float64  `yaml:"mem_crit"`
+	// SysStats is on or off: host CPU usage and RAM next to the GPU stats.
+	// Its colours use the memory bands.
+	SysStats string `yaml:"sys_stats"`
 }
+
+// SysStatsOn reports whether the CPU and RAM figures are shown.
+func (c Config) SysStatsOn() bool { return c.GPU.SysStats != "off" }
 
 // Server is the SSH listener.
 type Server struct {
@@ -263,7 +297,22 @@ type Chat struct {
 	YouLabel     string `yaml:"you_label"`
 	// Markdown is on or off. Assistant replies are rendered when it is on.
 	Markdown string `yaml:"markdown"`
+	// Usage is on or off. On asks the backend for token counts
+	// (stream_options.include_usage) for the context gauge.
+	Usage string `yaml:"context_usage"`
+	// WarnPct colours the context gauge and suggests compressing.
+	WarnPct int `yaml:"context_warn_pct"`
+	// KeepTurns is how many recent exchanges compress keeps verbatim.
+	KeepTurns int `yaml:"compress_keep_turns"`
+	// CompressPrompt is the instruction used to summarise older turns.
+	CompressPrompt string `yaml:"compress_prompt"`
 }
+
+// DefaultCompressPrompt asks the model for a summary of older turns.
+const DefaultCompressPrompt = "Summarise the conversation so far for your own later use. Keep facts, decisions, names, file names, code identifiers, open questions and the user's preferences. Write compact bullet points in the language of the conversation. Do not add anything new."
+
+// UsageOn reports whether chat requests ask for token usage.
+func (c Config) UsageOn() bool { return c.Chat.Usage != "off" }
 
 // MarkdownOn reports whether assistant replies should be rendered.
 func (c Config) MarkdownOn() bool {
@@ -360,6 +409,17 @@ func (c *Config) normalize() {
 	c.Chat.Placeholder = strings.TrimSpace(c.Chat.Placeholder)
 	c.Chat.SystemPrompt = strings.TrimSpace(c.Chat.SystemPrompt)
 	c.Chat.YouLabel = strings.TrimSpace(c.Chat.YouLabel)
+	c.Chat.Usage = onOff(c.Chat.Usage)
+	if c.Chat.WarnPct <= 0 || c.Chat.WarnPct > 100 {
+		c.Chat.WarnPct = 80
+	}
+	if c.Chat.KeepTurns < 0 {
+		c.Chat.KeepTurns = 0
+	}
+	c.Chat.CompressPrompt = strings.TrimSpace(c.Chat.CompressPrompt)
+	if c.Chat.CompressPrompt == "" {
+		c.Chat.CompressPrompt = DefaultCompressPrompt
+	}
 	c.Chat.Markdown = strings.ToLower(strings.TrimSpace(c.Chat.Markdown))
 	if c.Chat.Markdown == "" {
 		c.Chat.Markdown = "on"
@@ -380,7 +440,7 @@ func (c *Config) normalize() {
 		c.Uploads.MaxFiles = 1000
 	}
 	if c.Uploads.MaxTotalBytes <= 0 {
-		c.Uploads.MaxTotalBytes = 200 << 20
+		c.Uploads.MaxTotalBytes = 256 << 20
 	}
 	c.Uploads.Ignore = strings.TrimSpace(c.Uploads.Ignore)
 	if c.Uploads.Ignore == "" {
@@ -407,6 +467,8 @@ func (c *Config) normalize() {
 	if c.GPU.Mode == "" {
 		c.GPU.Mode = "auto"
 	}
+	c.GPU.SysStats = onOff(c.GPU.SysStats)
+	c.normalizeHub()
 	if c.GPU.Interval <= 0 {
 		c.GPU.Interval = Duration(2 * time.Second)
 	}
@@ -476,6 +538,44 @@ func (c *Config) normalizeFit() {
 	}
 }
 
+func (c *Config) normalizeHub() {
+	h := &c.Hub
+	h.Pull = onOff(h.Pull)
+	h.URL = strings.TrimRight(strings.TrimSpace(h.URL), "/")
+	if h.URL == "" {
+		h.URL = "https://hub.docker.com"
+	}
+	h.Namespace = strings.Trim(strings.TrimSpace(h.Namespace), "/")
+	if h.Namespace == "" {
+		h.Namespace = "ai"
+	}
+	if h.CacheTTL <= 0 {
+		h.CacheTTL = Duration(30 * time.Minute)
+	}
+	if strings.TrimSpace(h.AllTags) == "" {
+		h.AllTags = "off"
+	}
+	h.AllTags = onOff(h.AllTags)
+	if h.Concurrency <= 0 {
+		h.Concurrency = 1
+	}
+	if h.Concurrency > 2 {
+		h.Concurrency = 2
+	}
+	if h.MinFree < 0 {
+		h.MinFree = 0
+	}
+	h.ModelsDir = strings.TrimSpace(h.ModelsDir)
+}
+
+// ModelsDir is the directory whose filesystem receives pulled models.
+func (c Config) ModelsDir() string {
+	if c.Hub.ModelsDir != "" {
+		return c.Hub.ModelsDir
+	}
+	return c.Fit.ModelStorePath
+}
+
 func (c *Config) normalizeEdit() {
 	e := &c.Edit
 	e.Mode = onOff(e.Mode)
@@ -497,7 +597,7 @@ func (c *Config) normalizeEdit() {
 		d.Dir = "/downloads"
 	}
 	if d.MaxTotalBytes <= 0 {
-		d.MaxTotalBytes = 200 << 20
+		d.MaxTotalBytes = 256 << 20
 	}
 	d.Archive = strings.ToLower(strings.TrimSpace(d.Archive))
 	if d.Archive == "" {
@@ -624,6 +724,23 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 	set("VISION_MODELS", &c.Uploads.VisionModels)
 	set("NON_VISION_MODELS", &c.Uploads.NonVisionModels)
 	set("GPU_STATS", &c.GPU.Mode)
+	set("CONTEXT_USAGE", &c.Chat.Usage)
+	set("COMPRESS_PROMPT", &c.Chat.CompressPrompt)
+	if v, ok := lookup(getenv, "CONTEXT_WARN_PCT"); ok {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 100 {
+			return fmt.Errorf("CONTEXT_WARN_PCT must be 1-100")
+		}
+		c.Chat.WarnPct = n
+	}
+	if v, ok := lookup(getenv, "COMPRESS_KEEP_TURNS"); ok {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return fmt.Errorf("COMPRESS_KEEP_TURNS must be a non-negative integer")
+		}
+		c.Chat.KeepTurns = n
+	}
+	set("SYS_STATS", &c.GPU.SysStats)
 	set("EDIT_MODE", &c.Edit.Mode)
 	set("EDIT_PROTOCOL", &c.Edit.Protocol)
 	set("EDIT_ALLOW_NEW", &c.Edit.AllowNew)
@@ -638,12 +755,8 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 	set("DOWNLOAD_DIR", &c.Downloads.Dir)
 	set("DOWNLOAD_ARCHIVE", &c.Downloads.Archive)
 	set("PUBLIC_HOST", &c.Downloads.PublicHost)
-	if v, ok := lookup(getenv, "DOWNLOAD_MAX_TOTAL_BYTES"); ok {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n <= 0 {
-			return fmt.Errorf("DOWNLOAD_MAX_TOTAL_BYTES must be a positive integer")
-		}
-		c.Downloads.MaxTotalBytes = n
+	if err := positiveBytesEnv(getenv, "DOWNLOAD_MAX_TOTAL_BYTES", &c.Downloads.MaxTotalBytes); err != nil {
+		return err
 	}
 	if v, ok := lookup(getenv, "PUBLIC_PORT"); ok {
 		n, err := strconv.Atoi(v)
@@ -653,15 +766,8 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 		c.Downloads.PublicPort = n
 	}
 	set("NVIDIA_SMI", &c.GPU.SMIPath)
-	if v, ok := lookup(getenv, "UPLOAD_MAX_BYTES"); ok {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			return fmt.Errorf("UPLOAD_MAX_BYTES: %w", err)
-		}
-		if n <= 0 {
-			return fmt.Errorf("UPLOAD_MAX_BYTES must be > 0")
-		}
-		c.Uploads.MaxBytes = n
+	if err := positiveBytesEnv(getenv, "UPLOAD_MAX_BYTES", &c.Uploads.MaxBytes); err != nil {
+		return err
 	}
 	if v, ok := lookup(getenv, "UPLOAD_MAX_FILES"); ok {
 		n, err := strconv.Atoi(v)
@@ -673,15 +779,8 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 		}
 		c.Uploads.MaxFiles = n
 	}
-	if v, ok := lookup(getenv, "UPLOAD_MAX_TOTAL_BYTES"); ok {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			return fmt.Errorf("UPLOAD_MAX_TOTAL_BYTES: %w", err)
-		}
-		if n <= 0 {
-			return fmt.Errorf("UPLOAD_MAX_TOTAL_BYTES must be > 0")
-		}
-		c.Uploads.MaxTotalBytes = n
+	if err := positiveBytesEnv(getenv, "UPLOAD_MAX_TOTAL_BYTES", &c.Uploads.MaxTotalBytes); err != nil {
+		return err
 	}
 	set("UPLOAD_IGNORE", &c.Uploads.Ignore)
 	if v, ok := lookup(getenv, "UPLOAD_AUTO_INCLUDE"); ok {
@@ -714,15 +813,8 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 		}
 		c.Uploads.ImageMaxPx = n
 	}
-	if v, ok := lookup(getenv, "IMAGE_MAX_BYTES"); ok {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			return fmt.Errorf("IMAGE_MAX_BYTES: %w", err)
-		}
-		if n <= 0 {
-			return fmt.Errorf("IMAGE_MAX_BYTES must be > 0")
-		}
-		c.Uploads.ImageMaxBytes = n
+	if err := positiveBytesEnv(getenv, "IMAGE_MAX_BYTES", &c.Uploads.ImageMaxBytes); err != nil {
+		return err
 	}
 	if v, ok := lookup(getenv, "FILES_BOX_ROWS"); ok {
 		n, err := strconv.Atoi(v)
@@ -769,6 +861,28 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 	set("ALLOW_CPU", &c.Fit.AllowCPU)
 	set("MODEL_STORE_PATH", &c.Fit.ModelStorePath)
 	set("KV_CACHE_TYPE", &c.Fit.KVCacheType)
+	set("MODEL_PULL", &c.Hub.Pull)
+	set("HUB_URL", &c.Hub.URL)
+	set("HUB_NAMESPACE", &c.Hub.Namespace)
+	set("HUB_ALL_TAGS", &c.Hub.AllTags)
+	set("MODEL_PULL_DIR", &c.Hub.ModelsDir)
+	if err := applyDurationEnv(getenv, "HUB_CACHE_TTL", &c.Hub.CacheTTL); err != nil {
+		return err
+	}
+	if v, ok := lookup(getenv, "MODEL_PULL_CONCURRENCY"); ok {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 2 {
+			return fmt.Errorf("MODEL_PULL_CONCURRENCY must be 1 or 2")
+		}
+		c.Hub.Concurrency = n
+	}
+	if v, ok := lookup(getenv, "MODEL_PULL_MIN_FREE"); ok {
+		n, err := ParseBytes(v)
+		if err != nil || n < 0 {
+			return fmt.Errorf("MODEL_PULL_MIN_FREE: a size such as 5G or 0")
+		}
+		c.Hub.MinFree = n
+	}
 	set("FIT_USAGE_PATH", &c.Fit.UsagePath)
 	if v, ok := lookup(getenv, "FIT_MARGIN_MIB"); ok {
 		n, err := strconv.ParseInt(v, 10, 64)

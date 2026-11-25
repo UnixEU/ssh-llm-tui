@@ -11,7 +11,7 @@ name: ssh-llm-tui
 services:
   ssh-llm-tui:
     build: .
-    image: ssh-llm-tui:1.3.1
+    image: ssh-llm-tui:1.4.0
     container_name: ssh-llm-tui
     init: true
     read_only: true
@@ -21,14 +21,15 @@ services:
       - no-new-privileges:true
     tmpfs:
       - /tmp
-      # Per-user uploads, up to UPLOAD_MAX_TOTAL_BYTES (200 MiB) per user.
-      # tmpfs only uses RAM for what is stored. Raise the size for several
-      # users uploading large trees at once. uid matches the image user.
-      - /uploads:size=512m,uid=65532,gid=65532,mode=0755
+      # Per-user uploads, up to UPLOAD_MAX_TOTAL_BYTES (256 MiB) per user.
+      # tmpfs lives in host RAM and only uses what is stored. Set
+      # UPLOADS_TMPFS_SIZE in .env (see .env.example) for several users or
+      # larger trees. uid matches the image user.
+      - /uploads:size=${UPLOADS_TMPFS_SIZE:-256m},uid=65532,gid=65532,mode=0755
       # Per-user downloads (edited files, changes.patch, tar.gz archives),
-      # up to DOWNLOAD_MAX_TOTAL_BYTES (200 MiB) per user. Wiped with the
-      # user's last TUI session, like uploads.
-      - /downloads:size=512m,uid=65532,gid=65532,mode=0755
+      # up to DOWNLOAD_MAX_TOTAL_BYTES (256 MiB) per user. Wiped with the
+      # user's last TUI session, like uploads. DOWNLOADS_TMPFS_SIZE in .env.
+      - /downloads:size=${DOWNLOADS_TMPFS_SIZE:-256m},uid=65532,gid=65532,mode=0755
     ports:
       - "2222:2222"
     # host-gateway is the host bridge address (172.17.0.1 on a typical
@@ -53,6 +54,8 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: utility
       GPU_STATS: auto
       GPU_POLL_INTERVAL: 2s
+      # Host CPU usage and RAM in front of the GPU columns.
+      SYS_STATS: "on"
       GPU_TEMP_WARN: "40"
       GPU_TEMP_HOT: "60"
       GPU_TEMP_CRIT: "70"
@@ -63,9 +66,13 @@ services:
       GPU_MEM_HOT: "60"
       GPU_MEM_CRIT: "90"
       MARKDOWN: "on"
-      UPLOAD_MAX_BYTES: "10485760"
+      # Context gauge in the chat title and the ctrl+x panel.
+      CONTEXT_USAGE: "on"
+      CONTEXT_WARN_PCT: "80"
+      COMPRESS_KEEP_TURNS: "2"
+      UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-10M}
       UPLOAD_MAX_FILES: "1000"
-      UPLOAD_MAX_TOTAL_BYTES: "209715200"
+      UPLOAD_MAX_TOTAL_BYTES: ${UPLOAD_MAX_TOTAL_BYTES:-256M}
       UPLOAD_IGNORE: .git,node_modules,.venv,__pycache__,.DS_Store
       UPLOAD_AUTO_INCLUDE: "20"
       CONTEXT_TOKEN_BUDGET: "8192"
@@ -77,15 +84,14 @@ services:
       EDIT_ALLOW_NEW: "true"
       EDIT_ALLOW_DELETE: "false"
       DOWNLOAD_DIR: /downloads
-      DOWNLOAD_MAX_TOTAL_BYTES: "209715200"
+      DOWNLOAD_MAX_TOTAL_BYTES: ${DOWNLOAD_MAX_TOTAL_BYTES:-256M}
       DOWNLOAD_ARCHIVE: tar.gz
       # Name and port clients use to reach this server. Only used to print
       # exact scp/sftp download commands in the TUI.
       # PUBLIC_HOST: llm.example.lan
       # PUBLIC_PORT: "2222"
       IMAGE_MAX_PX: "1536"
-      IMAGE_MAX_BYTES: "2097152"
-      FILES_BOX_ROWS: "4"
+      IMAGE_MAX_BYTES: "2M"
       # VISION_MODELS: "ai/*vl*"
       # NON_VISION_MODELS: "ai/gpt-oss*"
       # Banner is copied into the image at build time from banner.txt.
@@ -113,6 +119,12 @@ services:
       # Remove this line and the dmr-models mount below if your DMR does not
       # keep models in a Docker volume (for example Docker Desktop).
       MODEL_STORE_PATH: /dmr-models
+      # p on the model list: Docker Hub search and background pulls into DMR,
+      # open to every user. The free space of the model disk is read from
+      # MODEL_STORE_PATH; a pull that does not fit is refused.
+      MODEL_PULL: ${MODEL_PULL:-on}
+      MODEL_PULL_CONCURRENCY: ${MODEL_PULL_CONCURRENCY:-1}
+      MODEL_PULL_MIN_FREE: ${MODEL_PULL_MIN_FREE:-2G}
       FIT_USAGE_PATH: /data/fit/usage.json
       AUTH_MODE: open
       # Switch to key auth by setting AUTH_MODE=keys and mounting a file:

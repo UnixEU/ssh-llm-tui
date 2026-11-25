@@ -44,7 +44,7 @@ func TestLoadBakedInDefaults(t *testing.T) {
 	if !strings.Contains(cfg.Loading.Message, "{model}") {
 		t.Fatalf("loading message = %q", cfg.Loading.Message)
 	}
-	if cfg.Uploads.MaxBytes != 10<<20 || cfg.Uploads.MaxFiles != 1000 || cfg.Uploads.MaxTotalBytes != 200<<20 || cfg.Uploads.AutoInclude != 20 || cfg.Uploads.Ignore != DefaultUploadIgnore || cfg.Uploads.TokenBudget != 8192 {
+	if cfg.Uploads.MaxBytes != 10<<20 || cfg.Uploads.MaxFiles != 1000 || cfg.Uploads.MaxTotalBytes != 256<<20 || cfg.Uploads.AutoInclude != 20 || cfg.Uploads.Ignore != DefaultUploadIgnore || cfg.Uploads.TokenBudget != 8192 {
 		t.Fatalf("uploads %+v", cfg.Uploads)
 	}
 	if cfg.Uploads.ImageMaxPx != 1536 || cfg.Uploads.ImageMaxBytes != 2<<20 || cfg.Uploads.FilesBoxRows != 4 {
@@ -347,7 +347,7 @@ func TestEditAndDownloadDefaultsAndEnv(t *testing.T) {
 	if !cfg.EditOn() || !cfg.EditAllowNew() || cfg.EditAllowDelete() || cfg.Edit.MaxFiles != 20 || cfg.Edit.Protocol != "blocks" {
 		t.Fatalf("edit defaults %+v", cfg.Edit)
 	}
-	if cfg.Downloads.Dir != "/downloads" || cfg.Downloads.MaxTotalBytes != 200<<20 || cfg.Downloads.Archive != "tar.gz" || cfg.PublicPort() != 2222 || cfg.Downloads.PublicHost != "" {
+	if cfg.Downloads.Dir != "/downloads" || cfg.Downloads.MaxTotalBytes != 256<<20 || cfg.Downloads.Archive != "tar.gz" || cfg.PublicPort() != 2222 || cfg.Downloads.PublicHost != "" {
 		t.Fatalf("download defaults %+v", cfg.Downloads)
 	}
 	cfg, err = Load(LoadOptions{Getenv: envFrom(map[string]string{
@@ -380,6 +380,45 @@ func TestEditAndDownloadDefaultsAndEnv(t *testing.T) {
 		_, err := Load(LoadOptions{Getenv: envFrom(map[string]string{env: bad[env]})})
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("%s: %v", env, err)
+		}
+	}
+}
+
+func TestHubDefaultsAndEnv(t *testing.T) {
+	cfg, err := Load(LoadOptions{Getenv: envFrom(map[string]string{"MODEL_STORE_PATH": "/dmr-models"})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := cfg.Hub
+	if !cfg.PullOn() || h.URL != "https://hub.docker.com" || h.Namespace != "ai" || h.CacheTTL.Duration() != 30*time.Minute ||
+		h.AllTags != "off" || h.Concurrency != 1 || h.MinFree != 2<<30 || cfg.ModelsDir() != "/dmr-models" {
+		t.Fatalf("defaults %+v dir %q", h, cfg.ModelsDir())
+	}
+	cfg, err = Load(LoadOptions{Getenv: envFrom(map[string]string{
+		"MODEL_PULL":             "off",
+		"HUB_URL":                "https://hub.example.test/",
+		"HUB_NAMESPACE":          "/models/",
+		"HUB_CACHE_TTL":          "5m",
+		"HUB_ALL_TAGS":           "on",
+		"MODEL_PULL_CONCURRENCY": "2",
+		"MODEL_PULL_MIN_FREE":    "0",
+		"MODEL_PULL_DIR":         "/models",
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h = cfg.Hub
+	if cfg.PullOn() || h.URL != "https://hub.example.test" || h.Namespace != "models" || h.CacheTTL.Duration() != 5*time.Minute ||
+		h.AllTags != "on" || h.Concurrency != 2 || h.MinFree != 0 || cfg.ModelsDir() != "/models" {
+		t.Fatalf("env %+v", h)
+	}
+	for _, bad := range []map[string]string{
+		{"MODEL_PULL_CONCURRENCY": "3"},
+		{"MODEL_PULL_MIN_FREE": "lots"},
+		{"HUB_CACHE_TTL": "soon"},
+	} {
+		if _, err := Load(LoadOptions{Getenv: envFrom(bad)}); err == nil {
+			t.Fatalf("%v should be rejected", bad)
 		}
 	}
 }

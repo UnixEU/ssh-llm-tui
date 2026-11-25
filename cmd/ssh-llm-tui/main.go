@@ -12,16 +12,20 @@ import (
 	"time"
 
 	"github.com/UnixEU/ssh-llm-tui/internal/config"
+	"github.com/UnixEU/ssh-llm-tui/internal/diskspace"
 	"github.com/UnixEU/ssh-llm-tui/internal/dmr"
 	"github.com/UnixEU/ssh-llm-tui/internal/downloads"
 	"github.com/UnixEU/ssh-llm-tui/internal/edits"
 	"github.com/UnixEU/ssh-llm-tui/internal/fit"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpu"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpuinfo"
+	"github.com/UnixEU/ssh-llm-tui/internal/hub"
 	"github.com/UnixEU/ssh-llm-tui/internal/modelstore"
+	"github.com/UnixEU/ssh-llm-tui/internal/pull"
 	"github.com/UnixEU/ssh-llm-tui/internal/session"
 	"github.com/UnixEU/ssh-llm-tui/internal/sshserver"
 	"github.com/UnixEU/ssh-llm-tui/internal/sysmem"
+	"github.com/UnixEU/ssh-llm-tui/internal/sysstat"
 	"github.com/UnixEU/ssh-llm-tui/internal/ui"
 	"github.com/UnixEU/ssh-llm-tui/internal/uploads"
 	tea "github.com/charmbracelet/bubbletea"
@@ -30,7 +34,7 @@ import (
 )
 
 // version is the release. The Docker build may override it with -X.
-var version = "1.3.1"
+var version = "1.4.0"
 
 const defaultConfigPath = "/config/config.yaml"
 
@@ -55,6 +59,7 @@ func run() error {
 		BaseURL:        cfg.DMR.BaseURL,
 		RequestTimeout: cfg.DMR.RequestTimeout.Duration(),
 		WarmTimeout:    cfg.DMR.WarmTimeout.Duration(),
+		NoUsage:        !cfg.UsageOn(),
 	})
 	if err != nil {
 		return err
@@ -80,12 +85,42 @@ func run() error {
 	if _, err := os.Stat(cfg.Downloads.Dir); err != nil {
 		logger.Printf("warning: download dir %s: %v (exports will fail)", cfg.Downloads.Dir, err)
 	}
+	checkSpace(logger, []diskspace.Check{
+		{Name: "UPLOAD_MAX_TOTAL_BYTES", Dir: cfg.Uploads.Dir, Limit: cfg.Uploads.MaxTotalBytes},
+		{Name: "DOWNLOAD_MAX_TOTAL_BYTES", Dir: cfg.Downloads.Dir, Limit: cfg.Downloads.MaxTotalBytes},
+	})
 	workspaces := edits.NewManager()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	gpus := gpuinfo.NewPoller(cfg.GPU.Mode, cfg.GPU.SMIPath, cfg.GPU.Interval.Duration())
 	go gpus.Start(ctx)
+	var sys *sysstat.Poller
+	if cfg.SysStatsOn() {
+		sys = sysstat.NewPoller(cfg.GPU.Interval.Duration())
+		go sys.Start(ctx)
+	}
 	resolver, learned := setupFit(logger, cfg)
+	var hubClient *hub.Client
+	var pulls *pull.Manager
+	if cfg.PullOn() {
+		hubClient = hub.New(hub.Options{
+			BaseURL:   cfg.Hub.URL,
+			Namespace: cfg.Hub.Namespace,
+			TTL:       cfg.Hub.CacheTTL.Duration(),
+			AllTags:   cfg.Hub.AllTags == "on",
+		})
+		pulls = pull.New(ctx, client, cfg.Hub.Concurrency)
+		pulls.OnFinish(func(j pull.Job) {
+			if j.Err != "" {
+				logger.Printf("pull %s by %s: %s: %s", j.Ref, j.User, j.State, j.Err)
+				return
+			}
+			logger.Printf("pull %s by %s: %s", j.Ref, j.User, j.State)
+		})
+		if cfg.ModelsDir() == "" {
+			logger.Printf("MODEL_STORE_PATH is not set; model pulls cannot check free space on the model disk")
+		}
+	}
 	srv, err := sshserver.NewWith(cfg.Server, func(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 		model := ui.New(ui.Options{
 			Config:    cfg,
@@ -95,11 +130,14 @@ func run() error {
 			Downloads: dl,
 			Edits:     workspaces,
 			GPU:       gpus,
+			Sys:       sys,
 			Unloader:  tracker,
 			Budget:    cfg.Uploads.TokenBudget,
 			Resolver:  resolver,
 			Learned:   learned,
 			ReadRAM:   sysmem.Read,
+			Hub:       hubClient,
+			Pulls:     pulls,
 			Renderer:  bubbletea.MakeRenderer(sess),
 			User:      sess.User(),
 			Version:   version,
@@ -188,4 +226,20 @@ func probeDMR(logger *log.Logger, client *dmr.Client, base string) {
 		return
 	}
 	logger.Printf("DMR reachable at %s (%d model(s) pulled)", base, len(models))
+}
+
+// checkSpace warns when a per-user limit is larger than the filesystem
+// that holds it (usually a compose tmpfs), since uploads or exports would
+// then fail before the limit is reached.
+func checkSpace(logger *log.Logger, checks []diskspace.Check) {
+	for _, c := range checks {
+		info, err := diskspace.Read(c.Dir)
+		if err != nil {
+			continue
+		}
+		if diskspace.Short(info, c.Limit) {
+			logger.Printf("warning: %s is %s, but %s holds only %s; raise the tmpfs size (UPLOADS_TMPFS_SIZE / DOWNLOADS_TMPFS_SIZE in .env) or lower the limit",
+				c.Name, config.FormatBytes(c.Limit), c.Dir, config.FormatBytes(info.TotalBytes))
+		}
+	}
 }

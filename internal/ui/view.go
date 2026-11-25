@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/UnixEU/ssh-llm-tui/internal/dmr"
+	"github.com/UnixEU/ssh-llm-tui/internal/gpuinfo"
+	"github.com/UnixEU/ssh-llm-tui/internal/sysstat"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -41,6 +43,12 @@ func (m *Model) View() string {
 		body = m.viewFit()
 	case screenChanges:
 		body = m.viewChanges(bodyH)
+	case screenCtxInfo:
+		body = m.viewCtxPanel()
+	case screenFiles:
+		body = m.viewFiles(bodyH)
+	case screenHub:
+		body = m.viewHub(bodyH)
 	default:
 		body = "ssh-llm-tui"
 	}
@@ -107,6 +115,9 @@ func (m *Model) viewModels() string {
 	if m.status != "" && !m.fetching {
 		hintText = m.status
 	}
+	if n := m.activePulls(); n > 0 {
+		hintText = strings.TrimSpace(hintText + " " + plural(n, "download", "downloads") + " running, p shows progress.")
+	}
 	hint := ""
 	if strings.TrimSpace(hintText) != "" {
 		hint = m.theme.muted.Width(max(1, m.width)).Render(hintText)
@@ -134,8 +145,11 @@ func (m *Model) viewLoading() string {
 
 func (m *Model) viewChat(bodyH int) string {
 	right := (dmr.Model{ID: m.modelID}).DisplayName()
-	if right != "" && m.ctxSize > 0 {
-		right += " · ctx " + ctxLabel(m.ctxSize) + " · " + targetShort(m.target)
+	if right != "" {
+		right += " · " + m.ctxGauge()
+		if m.ctxSize > 0 {
+			right += " · " + targetShort(m.target)
+		}
 	}
 	if right == "" {
 		right = "v" + m.version
@@ -233,6 +247,9 @@ func (m *Model) statusText() string {
 	if m.errText != "" {
 		return m.clipWidth(m.theme.err.Render(m.errText))
 	}
+	if m.compressing {
+		return m.clipWidth(m.theme.status.Render(m.spinner.View() + " Compressing the history… ctrl+c cancels"))
+	}
 	if m.streaming && !m.thinkingNow() && strings.TrimSpace(m.partial) != "" {
 		return m.clipWidth(m.theme.status.Render("Generating…"))
 	}
@@ -290,6 +307,12 @@ func (m *Model) helpLabels(short bool) []string {
 		}
 		return []string{"any key continue", "ctrl+q exit"}
 	case screenModels:
+		if m.hubReady() {
+			if short {
+				return []string{"enter", "r", "p", "ctrl+q"}
+			}
+			return []string{"enter select", "r refresh", "p pull from Docker Hub", "ctrl+q exit"}
+		}
 		if short {
 			return []string{"enter", "r", "ctrl+q"}
 		}
@@ -303,15 +326,15 @@ func (m *Model) helpLabels(short bool) []string {
 		return m.fitHelp(short)
 	case screenChanges:
 		return m.changesHelp(short)
+	case screenCtxInfo:
+		return m.ctxHelp(short)
+	case screenFiles:
+		return m.filesHelp(short)
+	case screenHub:
+		return m.hubHelp(short)
 	default:
-		if m.filesFocus {
-			if short {
-				return []string{"space", "d", "D clear", "j/k", "esc", "ctrl+q"}
-			}
-			return []string{"space include (file/dir)", "d remove", "D clear all", "j/k pgup g/G", "esc/ctrl+f back", "ctrl+q exit"}
-		}
 		if short {
-			out := []string{"enter", "ctrl+t", "ctrl+r", "ctrl+n", "ctrl+o", "ctrl+f"}
+			out := []string{"enter", "ctrl+t", "ctrl+r", "ctrl+n", "ctrl+o", "ctrl+x", "ctrl+f"}
 			if m.editsReady() {
 				out = append(out, "ctrl+e")
 			}
@@ -325,7 +348,7 @@ func (m *Model) helpLabels(short bool) []string {
 		if m.cfg.ConfiguresDMR() {
 			opts = append(opts, "ctrl+o options")
 		}
-		opts = append(opts, "ctrl+f files")
+		opts = append(opts, "ctrl+x context", "ctrl+f files")
 		if m.editsReady() {
 			opts = append(opts, "ctrl+e changes")
 		}
@@ -359,31 +382,40 @@ func (m *Model) composeHeader(title, right string, compact bool) string {
 	}
 	panel := m.gpuPanel(compact)
 	if panel == "" {
-		corner := right
-		if !strings.HasPrefix(right, "v") {
-			corner = "v" + m.version
-		}
-		return m.theme.titleLine(m.width, title, corner)
+		return m.theme.titleLine(m.width, left, "v"+m.version)
 	}
 	return m.placeBeside(left, panel)
 }
 
 func (m *Model) gpuPanel(forceCompact bool) string {
-	if m.gpu == nil {
-		return ""
+	var sys *sysstat.Snapshot
+	if m.sys != nil && m.cfg.SysStatsOn() {
+		s := m.sys.Snapshot()
+		sys = &s
 	}
-	snap := m.gpu.Snapshot()
-	if snap.Disabled {
-		return ""
-	}
-	if !snap.OK || len(snap.GPUs) == 0 {
-		if snap.Message != "" {
-			return snap.Message
+	var gpus []gpuinfo.GPU
+	note := ""
+	if m.gpu != nil {
+		snap := m.gpu.Snapshot()
+		switch {
+		case snap.Disabled:
+		case !snap.OK || len(snap.GPUs) == 0:
+			note = nonEmpty(snap.Message, "GPU n/a")
+		default:
+			gpus = snap.GPUs
 		}
-		return "GPU n/a"
 	}
-	r := m.theme.r
-	return renderGPUPanel(r, snap.GPUs, m.width, m.gpuThresholds(), forceCompact)
+	panel := renderStatsPanel(m.theme.r, gpus, sys, m.width, m.gpuThresholds(), forceCompact)
+	if note == "" {
+		return panel
+	}
+	if panel == "" {
+		return note
+	}
+	if lipgloss.Width(panel)+3+lipgloss.Width(note) <= m.width && !strings.Contains(panel, "\n") {
+		return panel + " · " + note
+	}
+	return panel + "\n" + note
 }
 
 func (m *Model) placeBeside(left, panel string) string {
@@ -435,12 +467,8 @@ func (m *Model) chatFileBox(maxH int) (string, int) {
 	if m.files == nil || maxH < 1 {
 		return "", 0
 	}
-	box := m.renderFileBox(m.filesFocus)
+	box := m.renderFileBox(false)
 	h := lineCount(box)
-	if h > maxH && m.filesFocus {
-		box = m.renderFileBox(false)
-		h = lineCount(box)
-	}
 	if h > maxH || h < 1 {
 		return "", 0
 	}
@@ -550,7 +578,7 @@ func (m *Model) transcript() string {
 	for _, item := range m.turns {
 		blocks = append(blocks, m.renderTurn(item, width, you, false))
 	}
-	if m.streaming || m.partial != "" || m.partialR != "" || m.think.InThink() {
+	if (m.streaming && !m.compressing) || m.partial != "" || m.partialR != "" || m.think.InThink() {
 		blocks = append(blocks, m.renderTurn(turn{
 			role:          roleAssistant,
 			content:       m.partial,

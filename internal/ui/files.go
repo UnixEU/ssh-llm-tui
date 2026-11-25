@@ -345,6 +345,10 @@ func (m *Model) fileTitle(n int, files []uploads.File) string {
 }
 
 func (m *Model) fileRow(it fileItem, index, total, rows int) string {
+	return m.fileRowW(it, index, total, rows, m.width)
+}
+
+func (m *Model) fileRowW(it fileItem, index, total, rows, width int) string {
 	cur := " "
 	if it.key == m.fileSel {
 		cur = ">"
@@ -390,9 +394,9 @@ func (m *Model) fileRow(it fileItem, index, total, rows int) string {
 	}
 	left := cur + mark + " " + indent
 	right := "  " + info + " " + scrollGlyph(index, m.fileTop, rows, total)
-	line := fitMiddle(max(1, m.width), left, name, right)
+	line := fitMiddle(max(1, width), left, name, right)
 	if strings.Contains(line, "\n") {
 		line = strings.ReplaceAll(line, "\n", "")
 	}
-	return m.clipWidth(line)
+	return padTo(line, width)
 }
