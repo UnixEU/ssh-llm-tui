@@ -169,8 +169,36 @@ func looksVisionText(s string) bool {
 type StreamEvent struct {
 	Content   string
 	Reasoning string
-	Err       error
-	Done      bool
+	// Usage is set on the event that carries the token counts, usually
+	// the last chunk before [DONE].
+	Usage *Usage
+	Err   error
+	Done  bool
+}
+
+// Usage is what the backend reports for one request. llama.cpp sends
+// usage when stream_options.include_usage is set, and timings on the last
+// chunk either way.
+type Usage struct {
+	PromptTokens     int
+	CompletionTokens int
+	CachedTokens     int
+	// TokensPerSecond is the generation speed, 0 when unknown.
+	TokensPerSecond float64
+}
+
+// Total is prompt plus completion tokens: the context in use after the reply.
+func (u Usage) Total() int { return u.PromptTokens + u.CompletionTokens }
+
+// ContextError reports whether err is the backend refusing a request that
+// does not fit the loaded context (llama.cpp exceed_context_size_error).
+func ContextError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "exceed_context_size") || strings.Contains(s, "exceeds the available context size") ||
+		strings.Contains(s, "context length") && strings.Contains(s, "exceed")
 }
 
 // HTTPError is a non-2xx response from DMR.
@@ -195,6 +223,7 @@ type Client struct {
 	http           *http.Client
 	requestTimeout time.Duration
 	warmTimeout    time.Duration
+	noUsage        bool
 }
 
 // Options configures a Client.
@@ -203,6 +232,9 @@ type Options struct {
 	HTTP           *http.Client
 	RequestTimeout time.Duration
 	WarmTimeout    time.Duration
+	// NoUsage leaves stream_options out of chat requests, for backends
+	// that reject the field.
+	NoUsage bool
 }
 
 // New returns a client. baseURL is the DMR origin, without a path prefix.
@@ -232,6 +264,7 @@ func New(opts Options) (*Client, error) {
 		http:           hc,
 		requestTimeout: opts.RequestTimeout,
 		warmTimeout:    opts.WarmTimeout,
+		noUsage:        opts.NoUsage,
 	}, nil
 }
 
@@ -363,11 +396,15 @@ func (c *Client) ChatStream(ctx context.Context, model string, messages []Messag
 }
 
 func (c *Client) stream(ctx context.Context, model string, messages []Message, out chan<- StreamEvent) {
-	body, err := json.Marshal(chatRequest{
+	creq := chatRequest{
 		Model:    model,
 		Messages: messages,
 		Stream:   true,
-	})
+	}
+	if !c.noUsage {
+		creq.StreamOptions = &streamOptions{IncludeUsage: true}
+	}
+	body, err := json.Marshal(creq)
 	if err != nil {
 		send(ctx, out, StreamEvent{Err: err})
 		return
@@ -413,7 +450,7 @@ func (c *Client) stream(ctx context.Context, model string, messages []Message, o
 			send(ctx, out, StreamEvent{Err: err})
 			return
 		}
-		if ev.Content != "" || ev.Reasoning != "" {
+		if ev.Content != "" || ev.Reasoning != "" || ev.Usage != nil {
 			if !send(ctx, out, ev) {
 				return
 			}
@@ -454,7 +491,7 @@ func (c *Client) stream(ctx context.Context, model string, messages []Message, o
 			send(ctx, out, ev)
 			return
 		}
-		if ev.Content == "" && ev.Reasoning == "" {
+		if ev.Content == "" && ev.Reasoning == "" && ev.Usage == nil {
 			continue
 		}
 		if !send(ctx, out, ev) {
@@ -476,7 +513,7 @@ func eventFromJSON(raw []byte) (StreamEvent, error) {
 	if chunk.Error != nil && chunk.Error.Message != "" {
 		return StreamEvent{Err: errors.New(chunk.Error.Message)}, nil
 	}
-	ev := StreamEvent{}
+	ev := StreamEvent{Usage: chunk.usage()}
 	if len(chunk.Choices) > 0 {
 		delta := chunk.Choices[0].Delta
 		msg := chunk.Choices[0].Message
@@ -581,9 +618,14 @@ func (f *flexString) UnmarshalJSON(b []byte) error {
 }
 
 type chatRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
-	Stream   bool      `json:"stream,omitempty"`
+	Model         string         `json:"model"`
+	Messages      []Message      `json:"messages"`
+	Stream        bool           `json:"stream,omitempty"`
+	StreamOptions *streamOptions `json:"stream_options,omitempty"`
+}
+
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type unloadResponse struct {
@@ -626,4 +668,46 @@ type streamChunk struct {
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
+	Usage *struct {
+		PromptTokens        int `json:"prompt_tokens"`
+		CompletionTokens    int `json:"completion_tokens"`
+		PromptTokensDetails *struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
+	} `json:"usage"`
+	// Timings is llama.cpp's own report on the last chunk.
+	Timings *struct {
+		PromptN            int     `json:"prompt_n"`
+		CacheN             int     `json:"cache_n"`
+		PredictedN         int     `json:"predicted_n"`
+		PredictedPerSecond float64 `json:"predicted_per_second"`
+	} `json:"timings"`
+}
+
+// usage merges usage and timings. Usage wins for the counts; timings fill
+// in when usage is missing and always give the speed.
+func (c streamChunk) usage() *Usage {
+	if c.Usage == nil && c.Timings == nil {
+		return nil
+	}
+	var u Usage
+	if c.Usage != nil {
+		u.PromptTokens = c.Usage.PromptTokens
+		u.CompletionTokens = c.Usage.CompletionTokens
+		if c.Usage.PromptTokensDetails != nil {
+			u.CachedTokens = c.Usage.PromptTokensDetails.CachedTokens
+		}
+	}
+	if t := c.Timings; t != nil {
+		if c.Usage == nil {
+			u.PromptTokens = t.PromptN + t.CacheN
+			u.CompletionTokens = t.PredictedN
+			u.CachedTokens = t.CacheN
+		}
+		u.TokensPerSecond = t.PredictedPerSecond
+	}
+	if u.PromptTokens == 0 && u.CompletionTokens == 0 {
+		return nil
+	}
+	return &u
 }

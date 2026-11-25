@@ -60,3 +60,27 @@ func TestSizeEnv(t *testing.T) {
 		}
 	}
 }
+
+func TestContextEnv(t *testing.T) {
+	cfg, err := Load(LoadOptions{Getenv: envFrom(map[string]string{})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.UsageOn() || cfg.Chat.WarnPct != 80 || cfg.Chat.KeepTurns != 2 || cfg.Chat.CompressPrompt != DefaultCompressPrompt || !cfg.SysStatsOn() {
+		t.Fatalf("defaults %+v", cfg.Chat)
+	}
+	cfg, err = Load(LoadOptions{Getenv: envFrom(map[string]string{
+		"CONTEXT_USAGE": "off", "CONTEXT_WARN_PCT": "90", "COMPRESS_KEEP_TURNS": "0", "COMPRESS_PROMPT": "sum up", "SYS_STATS": "off",
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UsageOn() || cfg.Chat.WarnPct != 90 || cfg.Chat.KeepTurns != 0 || cfg.Chat.CompressPrompt != "sum up" || cfg.SysStatsOn() {
+		t.Fatalf("env %+v", cfg.Chat)
+	}
+	for _, env := range []map[string]string{{"CONTEXT_WARN_PCT": "0"}, {"CONTEXT_WARN_PCT": "101"}, {"COMPRESS_KEEP_TURNS": "-1"}} {
+		if _, err := Load(LoadOptions{Getenv: envFrom(env)}); err == nil {
+			t.Errorf("accepted %v", env)
+		}
+	}
+}

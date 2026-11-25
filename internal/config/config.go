@@ -269,7 +269,22 @@ type Chat struct {
 	YouLabel     string `yaml:"you_label"`
 	// Markdown is on or off. Assistant replies are rendered when it is on.
 	Markdown string `yaml:"markdown"`
+	// Usage is on or off. On asks the backend for token counts
+	// (stream_options.include_usage) for the context gauge.
+	Usage string `yaml:"context_usage"`
+	// WarnPct colours the context gauge and suggests compressing.
+	WarnPct int `yaml:"context_warn_pct"`
+	// KeepTurns is how many recent exchanges compress keeps verbatim.
+	KeepTurns int `yaml:"compress_keep_turns"`
+	// CompressPrompt is the instruction used to summarise older turns.
+	CompressPrompt string `yaml:"compress_prompt"`
 }
+
+// DefaultCompressPrompt asks the model for a summary of older turns.
+const DefaultCompressPrompt = "Summarise the conversation so far for your own later use. Keep facts, decisions, names, file names, code identifiers, open questions and the user's preferences. Write compact bullet points in the language of the conversation. Do not add anything new."
+
+// UsageOn reports whether chat requests ask for token usage.
+func (c Config) UsageOn() bool { return c.Chat.Usage != "off" }
 
 // MarkdownOn reports whether assistant replies should be rendered.
 func (c Config) MarkdownOn() bool {
@@ -366,6 +381,17 @@ func (c *Config) normalize() {
 	c.Chat.Placeholder = strings.TrimSpace(c.Chat.Placeholder)
 	c.Chat.SystemPrompt = strings.TrimSpace(c.Chat.SystemPrompt)
 	c.Chat.YouLabel = strings.TrimSpace(c.Chat.YouLabel)
+	c.Chat.Usage = onOff(c.Chat.Usage)
+	if c.Chat.WarnPct <= 0 || c.Chat.WarnPct > 100 {
+		c.Chat.WarnPct = 80
+	}
+	if c.Chat.KeepTurns < 0 {
+		c.Chat.KeepTurns = 0
+	}
+	c.Chat.CompressPrompt = strings.TrimSpace(c.Chat.CompressPrompt)
+	if c.Chat.CompressPrompt == "" {
+		c.Chat.CompressPrompt = DefaultCompressPrompt
+	}
 	c.Chat.Markdown = strings.ToLower(strings.TrimSpace(c.Chat.Markdown))
 	if c.Chat.Markdown == "" {
 		c.Chat.Markdown = "on"
@@ -631,6 +657,22 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 	set("VISION_MODELS", &c.Uploads.VisionModels)
 	set("NON_VISION_MODELS", &c.Uploads.NonVisionModels)
 	set("GPU_STATS", &c.GPU.Mode)
+	set("CONTEXT_USAGE", &c.Chat.Usage)
+	set("COMPRESS_PROMPT", &c.Chat.CompressPrompt)
+	if v, ok := lookup(getenv, "CONTEXT_WARN_PCT"); ok {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 100 {
+			return fmt.Errorf("CONTEXT_WARN_PCT must be 1-100")
+		}
+		c.Chat.WarnPct = n
+	}
+	if v, ok := lookup(getenv, "COMPRESS_KEEP_TURNS"); ok {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return fmt.Errorf("COMPRESS_KEEP_TURNS must be a non-negative integer")
+		}
+		c.Chat.KeepTurns = n
+	}
 	set("SYS_STATS", &c.GPU.SysStats)
 	set("EDIT_MODE", &c.Edit.Mode)
 	set("EDIT_PROTOCOL", &c.Edit.Protocol)

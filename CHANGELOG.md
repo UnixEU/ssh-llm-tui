@@ -13,6 +13,13 @@
 
 - The top-right panel shows a `System` column in front of the GPUs: total host CPU usage (`CPU 48%`) and RAM used out of the total (`RAM 32/126 GiB`), read from `/proc`. Coloured with the VRAM bands. `SYS_STATS=off` hides it.
 
+### Context
+
+- The chat title shows the context in use against the context size, for example `ctx 12.4k/32k 38%`. Counts come from the backend after each reply (`stream_options.include_usage`, or llama.cpp `timings`); `~` marks an estimate. The size is the chosen one, else the one configured in DMR, else the model maximum.
+- `ctrl+x` opens a context panel with the size, tokens in use, the last reply's prompt, cached and reply tokens and speed, and an estimate per part. `r` resets the chat history (files stay) after y/n. `c` compresses: the model summarises older messages, the last `COMPRESS_KEEP_TURNS` exchanges stay, and the summary is sent with the system prompt.
+- A request that no longer fits the context gets a hint to compress, reset or pick a larger context.
+- New settings: `CONTEXT_USAGE`, `CONTEXT_WARN_PCT`, `COMPRESS_KEEP_TURNS`, `COMPRESS_PROMPT`.
+
 ## 1.3.1
 
 - The welcome banner is copied into the image at build time from `banner.txt`. It no longer depends on a host bind mount. Edit `banner.txt` and rebuild to customise it. `WELCOME_MESSAGE` is still the fallback when the file is missing, empty, or does not fit the terminal.

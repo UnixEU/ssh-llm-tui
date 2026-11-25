@@ -43,6 +43,8 @@ func (m *Model) View() string {
 		body = m.viewFit()
 	case screenChanges:
 		body = m.viewChanges(bodyH)
+	case screenCtxInfo:
+		body = m.viewCtxPanel()
 	default:
 		body = "ssh-llm-tui"
 	}
@@ -136,8 +138,11 @@ func (m *Model) viewLoading() string {
 
 func (m *Model) viewChat(bodyH int) string {
 	right := (dmr.Model{ID: m.modelID}).DisplayName()
-	if right != "" && m.ctxSize > 0 {
-		right += " · ctx " + ctxLabel(m.ctxSize) + " · " + targetShort(m.target)
+	if right != "" {
+		right += " · " + m.ctxGauge()
+		if m.ctxSize > 0 {
+			right += " · " + targetShort(m.target)
+		}
 	}
 	if right == "" {
 		right = "v" + m.version
@@ -235,6 +240,9 @@ func (m *Model) statusText() string {
 	if m.errText != "" {
 		return m.clipWidth(m.theme.err.Render(m.errText))
 	}
+	if m.compressing {
+		return m.clipWidth(m.theme.status.Render(m.spinner.View() + " Compressing the history… ctrl+c cancels"))
+	}
 	if m.streaming && !m.thinkingNow() && strings.TrimSpace(m.partial) != "" {
 		return m.clipWidth(m.theme.status.Render("Generating…"))
 	}
@@ -305,6 +313,8 @@ func (m *Model) helpLabels(short bool) []string {
 		return m.fitHelp(short)
 	case screenChanges:
 		return m.changesHelp(short)
+	case screenCtxInfo:
+		return m.ctxHelp(short)
 	default:
 		if m.filesFocus {
 			if short {
@@ -313,7 +323,7 @@ func (m *Model) helpLabels(short bool) []string {
 			return []string{"space include (file/dir)", "d remove", "D clear all", "j/k pgup g/G", "esc/ctrl+f back", "ctrl+q exit"}
 		}
 		if short {
-			out := []string{"enter", "ctrl+t", "ctrl+r", "ctrl+n", "ctrl+o", "ctrl+f"}
+			out := []string{"enter", "ctrl+t", "ctrl+r", "ctrl+n", "ctrl+o", "ctrl+x", "ctrl+f"}
 			if m.editsReady() {
 				out = append(out, "ctrl+e")
 			}
@@ -327,7 +337,7 @@ func (m *Model) helpLabels(short bool) []string {
 		if m.cfg.ConfiguresDMR() {
 			opts = append(opts, "ctrl+o options")
 		}
-		opts = append(opts, "ctrl+f files")
+		opts = append(opts, "ctrl+x context", "ctrl+f files")
 		if m.editsReady() {
 			opts = append(opts, "ctrl+e changes")
 		}
@@ -361,11 +371,7 @@ func (m *Model) composeHeader(title, right string, compact bool) string {
 	}
 	panel := m.gpuPanel(compact)
 	if panel == "" {
-		corner := right
-		if !strings.HasPrefix(right, "v") {
-			corner = "v" + m.version
-		}
-		return m.theme.titleLine(m.width, title, corner)
+		return m.theme.titleLine(m.width, left, "v"+m.version)
 	}
 	return m.placeBeside(left, panel)
 }
@@ -565,7 +571,7 @@ func (m *Model) transcript() string {
 	for _, item := range m.turns {
 		blocks = append(blocks, m.renderTurn(item, width, you, false))
 	}
-	if m.streaming || m.partial != "" || m.partialR != "" || m.think.InThink() {
+	if (m.streaming && !m.compressing) || m.partial != "" || m.partialR != "" || m.think.InThink() {
 		blocks = append(blocks, m.renderTurn(turn{
 			role:          roleAssistant,
 			content:       m.partial,

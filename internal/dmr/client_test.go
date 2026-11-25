@@ -370,3 +370,68 @@ func testClient(t *testing.T, base string) *Client {
 	}
 	return c
 }
+
+func TestChatStreamUsage(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"finish_reason\":\"stop\",\"delta\":{}}]}\n\n")
+		_, _ = io.WriteString(w, "data: {\"choices\":[],\"usage\":{\"completion_tokens\":12,\"prompt_tokens\":300,\"total_tokens\":312,\"prompt_tokens_details\":{\"cached_tokens\":250}},\"timings\":{\"prompt_n\":50,\"cache_n\":250,\"predicted_n\":12,\"predicted_per_second\":41.5}}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	var usage *Usage
+	content := ""
+	for ev := range c.ChatStream(context.Background(), "m", []Message{{Role: "user", Content: "q"}}) {
+		if ev.Err != nil {
+			t.Fatal(ev.Err)
+		}
+		content += ev.Content
+		if ev.Usage != nil {
+			usage = ev.Usage
+		}
+	}
+	if !strings.Contains(gotBody, `"stream_options":{"include_usage":true}`) {
+		t.Fatalf("body %s", gotBody)
+	}
+	if content != "ok" || usage == nil || usage.PromptTokens != 300 || usage.CompletionTokens != 12 || usage.CachedTokens != 250 || usage.TokensPerSecond != 41.5 || usage.Total() != 312 {
+		t.Fatalf("content %q usage %+v", content, usage)
+	}
+}
+
+func TestChatStreamTimingsOnly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(b), "stream_options") {
+			t.Errorf("NoUsage still sent stream_options: %s", b)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"finish_reason\":\"stop\",\"delta\":{\"content\":\"x\"}}],\"timings\":{\"prompt_n\":10,\"cache_n\":5,\"predicted_n\":3,\"predicted_per_second\":9}}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	c, err := New(Options{BaseURL: srv.URL, NoUsage: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var usage *Usage
+	for ev := range c.ChatStream(context.Background(), "m", []Message{{Role: "user", Content: "q"}}) {
+		if ev.Usage != nil {
+			usage = ev.Usage
+		}
+	}
+	if usage == nil || usage.PromptTokens != 15 || usage.CompletionTokens != 3 || usage.TokensPerSecond != 9 {
+		t.Fatalf("%+v", usage)
+	}
+}
+
+func TestContextError(t *testing.T) {
+	err := &HTTPError{Op: "chat", Status: 400, Body: `{"error":{"code":400,"message":"request (9000 tokens) exceeds the available context size (8192 tokens), try increasing it","type":"exceed_context_size_error"}}`}
+	if !ContextError(err) || ContextError(errors.New("boom")) || ContextError(nil) {
+		t.Fatal("ContextError")
+	}
+}

@@ -70,6 +70,12 @@ chat:
   placeholder: Message the model, then press enter
   system_prompt: You are a helpful assistant running locally via Docker Model Runner. Answer concisely.
   you_label: you
+  # Ask the backend for token counts for the context gauge (on/off).
+  context_usage: "on"
+  # Gauge turns orange at this share of the context; ctrl+x offers compress.
+  context_warn_pct: 80
+  # Exchanges kept verbatim when ctrl+x compresses the history.
+  compress_keep_turns: 2
 
 footer:
   change_model: ctrl+n change model

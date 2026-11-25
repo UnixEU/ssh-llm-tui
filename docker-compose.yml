@@ -66,6 +66,10 @@ services:
       GPU_MEM_HOT: "60"
       GPU_MEM_CRIT: "90"
       MARKDOWN: "on"
+      # Context gauge in the chat title and the ctrl+x panel.
+      CONTEXT_USAGE: "on"
+      CONTEXT_WARN_PCT: "80"
+      COMPRESS_KEEP_TURNS: "2"
       UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-10M}
       UPLOAD_MAX_FILES: "1000"
       UPLOAD_MAX_TOTAL_BYTES: ${UPLOAD_MAX_TOTAL_BYTES:-256M}

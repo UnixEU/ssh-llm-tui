@@ -37,6 +37,7 @@ const (
 	screenTarget
 	screenFit
 	screenChanges
+	screenCtxInfo
 )
 
 type loadKind int
@@ -154,6 +155,16 @@ type Model struct {
 	mdByWidth     map[int]*glamour.TermRenderer
 	status        string
 	errText       string
+
+	// Context gauge and the ctrl+x panel.
+	ctxDetected  int
+	usage        *dmr.Usage
+	pendingUsage *dmr.Usage
+	usageTurns   int
+	summary      string
+	compressing  bool
+	ctxConfirm   bool
+	ctxNote      string
 
 	// Edit review state.
 	editOn    bool
@@ -331,6 +342,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onFreed(msg)
 	case exportMsg:
 		return m.onExport(msg)
+	case ctxSizeMsg:
+		return m.onCtxSize(msg)
+	case compressMsg:
+		return m.onCompress(msg)
 	default:
 		return m, nil
 	}
@@ -367,6 +382,8 @@ func (m *Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.onFitKey(msg)
 	case screenChanges:
 		return m.onChangesKey(msg)
+	case screenCtxInfo:
+		return m.onCtxPanelKey(msg)
 	default:
 		return m, nil
 	}
@@ -428,6 +445,8 @@ func (m *Model) onChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+e":
 		return m.openChanges()
+	case "ctrl+x":
+		return m.openCtxPanel()
 	case "ctrl+r":
 		m.markdown = !m.markdown
 		m.syncTranscript(m.viewport.AtBottom())
@@ -572,13 +591,21 @@ func (m *Model) onWarm(msg warmMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) enterChat(model, note string) (tea.Model, tea.Cmd) {
-	m.modelID = model
 	m.fit = nil
 	m.errText = ""
 	m.status = ""
 	m.screen = screenChat
+	if model != m.modelID {
+		m.usage = nil
+		m.pendingUsage = nil
+	}
+	m.modelID = model
+	m.ctxDetected = 0
 	m.turns = append(m.turns, turn{role: roleNote, content: note})
 	m.syncTranscript(true)
+	if m.ctxSize == 0 {
+		return m, tea.Batch(m.input.Focus(), m.fetchCtxSize(model))
+	}
 	return m, m.input.Focus()
 }
 
@@ -613,6 +640,7 @@ func (m *Model) onStream(msg streamMsg) (tea.Model, tea.Cmd) {
 		m.finishStream(msg.ev.Err)
 		return m, nil
 	}
+	m.absorbUsage(msg.ev.Usage)
 	m.absorb(msg.ev.Content, msg.ev.Reasoning)
 	m.syncTranscript(m.viewport.AtBottom())
 	return m, waitStream(msg.gen, msg.ch)
@@ -767,7 +795,14 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 
 func (m *Model) apiMessages() []dmr.Message {
 	out := make([]dmr.Message, 0, len(m.turns)+1)
-	if sys := m.systemPrompt(); sys != "" {
+	sys := m.systemPrompt()
+	if sum := strings.TrimSpace(m.summary); sum != "" {
+		if sys != "" {
+			sys += "\n\n"
+		}
+		sys += "Summary of the earlier conversation:\n" + sum
+	}
+	if sys != "" {
 		out = append(out, dmr.Message{Role: "system", Content: sys})
 	}
 	if m.files != nil {
@@ -971,10 +1006,19 @@ func waitStream(gen int, ch <-chan dmr.StreamEvent) tea.Cmd {
 
 func (m *Model) finishStream(err error) {
 	m.streaming = false
+	m.compressing = false
 	m.commitPartial()
+	if err == nil {
+		m.commitUsage()
+	} else {
+		m.pendingUsage = nil
+	}
 	m.status = ""
 	if err != nil && !errors.Is(err, context.Canceled) {
 		m.errText = oneLine(err)
+		if dmr.ContextError(err) {
+			m.errText = "The conversation no longer fits the context. ctrl+x to compress or reset, or ctrl+o for a larger context. " + m.errText
+		}
 	} else if err == nil && m.files != nil && len(m.pendingImages) > 0 {
 		m.files.MarkSent(m.user, m.pendingImages)
 		m.pendingImages = nil

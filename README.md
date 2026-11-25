@@ -96,6 +96,7 @@ A help bar sits on the last row of every screen. It wraps or shortens on a narro
 | `ctrl+r` | chat | switch assistant replies between rendered Markdown and raw text |
 | `ctrl+n` | chat | unload runners and pick another model, even if other sessions are connected |
 | `ctrl+f` | chat | focus the file box. `j`/`k` and pgup/pgdn scroll it, space includes, `d` deletes one, `D` clears all after y/n, `esc` leaves the box |
+| `ctrl+x` | chat | context panel: size, tokens in use, last reply speed. `r` resets the history after y/n, `c` compresses it. See Context |
 | `ctrl+e` | chat | open the review screen for file changes the model proposed. See Edits and downloads |
 | `ctrl+c` | chat | cancel the reply in progress. It does not exit |
 | `pgup` / `pgdn`, `ctrl+u` / `ctrl+d` | chat | scroll |
@@ -129,6 +130,10 @@ Settings ending in `_BYTES` accept plain bytes (`10485760`) or a size with a bin
 | `MODELS_TITLE`, `MODELS_EMPTY`, `MODELS_HINT`, `MODELS_LOADING` | see YAML | model list copy |
 | `LOADING_TITLE`, `LOADING_MESSAGE` | see YAML | warm screen. `{model}` is replaced with the friendly name |
 | `CHAT_TITLE`, `CHAT_PLACEHOLDER`, `SYSTEM_PROMPT`, `CHAT_YOU_LABEL` | see YAML | chat copy and the system prompt |
+| `CONTEXT_USAGE` | `on` | ask the backend for token counts (`stream_options.include_usage`). `off` for backends that reject the field; llama.cpp timings still fill the gauge |
+| `CONTEXT_WARN_PCT` | `80` | the context gauge shows `⚠ ctrl+x` from this share of the context |
+| `COMPRESS_KEEP_TURNS` | `2` | exchanges kept verbatim when the history is compressed |
+| `COMPRESS_PROMPT` | built in | instruction the model gets to summarise older messages |
 | `MARKDOWN` | `on` | `on` renders finished assistant replies. `off` leaves them plain. `ctrl+r` toggles the session |
 | `FOOTER_CHANGE`, `FOOTER_EXIT`, `FOOTER_SCROLL` | see YAML | accepted and ignored. The help bar is drawn by the app |
 | `UPLOAD_DIR` | `/uploads` | on-disk root. Files live in `/uploads/<user>/<relative path>` |
@@ -353,6 +358,17 @@ A `System` column sits in front of the GPUs with two host figures: total CPU usa
 `50–60` means 50 ≤ t < 60, and the same pattern for the other open ends. The VRAM row looks like `18583/20475 MiB 91%`. nvidia-smi temperature can be a fraction (`60.06`). The panel rounds the number and colours the raw value.
 
 The runtime image is Debian (glibc) so the NVIDIA toolkit can inject `nvidia-smi`. `utility` is statistics only. It does not take the GPU away from Docker Model Runner. After changing compose, recreate the container.
+
+## Context
+
+The chat title shows how much of the model's context the conversation uses: `ai/gpt-oss:20b · ctx 12.4k/32k 38% · GPU`. The size is the one chosen with the context picker, otherwise the size configured in DMR (`GET /engines/_configure`), otherwise the model's maximum from the model list, otherwise `?`. The count after each reply is the backend's own (`usage.prompt_tokens + completion_tokens`, or llama.cpp `timings`). A `~` marks an estimate (about four bytes per token) for text added since the last reply, or before the first one. From `CONTEXT_WARN_PCT` (80%) the gauge adds `⚠ ctrl+x`.
+
+`ctrl+x` opens the context panel: size and where it comes from, tokens in use with a bar, the last reply (prompt, cached prompt, reply tokens, tokens per second) and an estimate per part (system prompt, files, chat, summary).
+
+- `r` resets the chat history after a y/n confirm. Uploaded files and the edit workspace stay.
+- `c` compresses. The model gets the older messages with `COMPRESS_PROMPT` and writes a summary. The last `COMPRESS_KEEP_TURNS` exchanges (2) stay as they are. The summary replaces the older messages, is shown in the chat as a note, and is sent with the system prompt from then on. Compressing again folds the previous summary in. `ctrl+c` cancels it.
+
+Included files are sent with every message and are not compressed. Exclude files with `ctrl+f` to free context. When the backend refuses a request that no longer fits (llama.cpp `exceed_context_size_error`), the chat says so and points to `ctrl+x` and `ctrl+o`.
 
 ## Markdown
 

@@ -57,6 +57,7 @@ func run() error {
 		BaseURL:        cfg.DMR.BaseURL,
 		RequestTimeout: cfg.DMR.RequestTimeout.Duration(),
 		WarmTimeout:    cfg.DMR.WarmTimeout.Duration(),
+		NoUsage:        !cfg.UsageOn(),
 	})
 	if err != nil {
 		return err
