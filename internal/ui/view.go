@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/UnixEU/ssh-llm-tui/internal/dmr"
+	"github.com/UnixEU/ssh-llm-tui/internal/gpuinfo"
+	"github.com/UnixEU/ssh-llm-tui/internal/sysstat"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -369,21 +371,34 @@ func (m *Model) composeHeader(title, right string, compact bool) string {
 }
 
 func (m *Model) gpuPanel(forceCompact bool) string {
-	if m.gpu == nil {
-		return ""
+	var sys *sysstat.Snapshot
+	if m.sys != nil && m.cfg.SysStatsOn() {
+		s := m.sys.Snapshot()
+		sys = &s
 	}
-	snap := m.gpu.Snapshot()
-	if snap.Disabled {
-		return ""
-	}
-	if !snap.OK || len(snap.GPUs) == 0 {
-		if snap.Message != "" {
-			return snap.Message
+	var gpus []gpuinfo.GPU
+	note := ""
+	if m.gpu != nil {
+		snap := m.gpu.Snapshot()
+		switch {
+		case snap.Disabled:
+		case !snap.OK || len(snap.GPUs) == 0:
+			note = nonEmpty(snap.Message, "GPU n/a")
+		default:
+			gpus = snap.GPUs
 		}
-		return "GPU n/a"
 	}
-	r := m.theme.r
-	return renderGPUPanel(r, snap.GPUs, m.width, m.gpuThresholds(), forceCompact)
+	panel := renderStatsPanel(m.theme.r, gpus, sys, m.width, m.gpuThresholds(), forceCompact)
+	if note == "" {
+		return panel
+	}
+	if panel == "" {
+		return note
+	}
+	if lipgloss.Width(panel)+3+lipgloss.Width(note) <= m.width && !strings.Contains(panel, "\n") {
+		return panel + " · " + note
+	}
+	return panel + "\n" + note
 }
 
 func (m *Model) placeBeside(left, panel string) string {

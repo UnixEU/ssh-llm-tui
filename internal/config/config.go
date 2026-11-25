@@ -210,7 +210,13 @@ type GPU struct {
 	MemWarn   float64  `yaml:"mem_warn"`
 	MemHot    float64  `yaml:"mem_hot"`
 	MemCrit   float64  `yaml:"mem_crit"`
+	// SysStats is on or off: host CPU usage and RAM next to the GPU stats.
+	// Its colours use the memory bands.
+	SysStats string `yaml:"sys_stats"`
 }
+
+// SysStatsOn reports whether the CPU and RAM figures are shown.
+func (c Config) SysStatsOn() bool { return c.GPU.SysStats != "off" }
 
 // Server is the SSH listener.
 type Server struct {
@@ -407,6 +413,7 @@ func (c *Config) normalize() {
 	if c.GPU.Mode == "" {
 		c.GPU.Mode = "auto"
 	}
+	c.GPU.SysStats = onOff(c.GPU.SysStats)
 	if c.GPU.Interval <= 0 {
 		c.GPU.Interval = Duration(2 * time.Second)
 	}
@@ -624,6 +631,7 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 	set("VISION_MODELS", &c.Uploads.VisionModels)
 	set("NON_VISION_MODELS", &c.Uploads.NonVisionModels)
 	set("GPU_STATS", &c.GPU.Mode)
+	set("SYS_STATS", &c.GPU.SysStats)
 	set("EDIT_MODE", &c.Edit.Mode)
 	set("EDIT_PROTOCOL", &c.Edit.Protocol)
 	set("EDIT_ALLOW_NEW", &c.Edit.AllowNew)

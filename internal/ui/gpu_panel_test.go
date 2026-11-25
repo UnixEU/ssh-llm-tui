@@ -7,6 +7,7 @@ import (
 
 	"github.com/UnixEU/ssh-llm-tui/internal/config"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpuinfo"
+	"github.com/UnixEU/ssh-llm-tui/internal/sysstat"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -189,4 +190,34 @@ func fakeGPU(index int, name string, temp int, watts float64, loaded bool) gpuin
 		g.AppsMiB = 14000
 	}
 	return g
+}
+
+func TestStatsPanelSystemColumn(t *testing.T) {
+	r := lipgloss.NewRenderer(io.Discard)
+	th := config.GPU{TempWarn: 50, TempHot: 60, TempCrit: 70, PowerWarn: 50, PowerHot: 75, PowerCrit: 150, MemWarn: 40, MemHot: 60, MemCrit: 90}
+	sys := &sysstat.Snapshot{CPUKnown: true, CPUPercent: 47.6, MemKnown: true, MemUsed: 32 << 30, MemTotal: 128 << 30}
+	one := []gpuinfo.GPU{fakeGPU(0, "Ada", 40, 40, false)}
+
+	panel := renderStatsPanel(r, one, sys, 100, th, false)
+	if lipgloss.Height(panel) != 4 || !strings.Contains(panel, "CPU 48%") || !strings.Contains(panel, "RAM 32/128 GiB") || !strings.Contains(panel, "GPU0") {
+		t.Fatalf("columns:\n%s", panel)
+	}
+	if strings.Index(panel, "System") > strings.Index(panel, "GPU0") {
+		t.Fatalf("system column should come first:\n%s", panel)
+	}
+	compact := renderStatsPanel(r, one, sys, 100, th, true)
+	if lines := strings.Split(compact, "\n"); len(lines) != 2 || !strings.HasPrefix(lines[0], "CPU 48% RAM 32/128 GiB") {
+		t.Fatalf("compact:\n%s", compact)
+	}
+	alone := renderStatsPanel(r, nil, sys, 100, th, true)
+	if alone != "CPU 48% RAM 32/128 GiB" {
+		t.Fatalf("no gpu: %q", alone)
+	}
+	small := sysstat.Snapshot{MemKnown: true, MemUsed: 3 << 29, MemTotal: 8 << 30}
+	if cpuText(small) != "CPU …" || ramText(small) != "RAM 1.5/8.0 GiB" {
+		t.Fatalf("%q %q", cpuText(small), ramText(small))
+	}
+	if renderStatsPanel(r, nil, &sysstat.Snapshot{}, 100, th, false) != "" {
+		t.Fatal("empty snapshot should render nothing")
+	}
 }

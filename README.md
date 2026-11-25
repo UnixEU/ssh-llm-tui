@@ -154,7 +154,8 @@ Settings ending in `_BYTES` accept plain bytes (`10485760`) or a size with a bin
 | `VISION_MODELS` | empty | comma-separated globs that force an image attempt |
 | `NON_VISION_MODELS` | empty | comma-separated globs that skip images |
 | `GPU_STATS` | `auto` | `auto` or `off` |
-| `GPU_POLL_INTERVAL` | `2s` | nvidia-smi poll |
+| `GPU_POLL_INTERVAL` | `2s` | nvidia-smi poll, also the CPU/RAM sample interval |
+| `SYS_STATS` | `on` | host CPU usage and RAM next to the GPU panel. `off` hides them |
 | `NVIDIA_SMI` | `nvidia-smi` | path to the binary |
 | `GPU_TEMP_WARN`, `GPU_TEMP_HOT`, `GPU_TEMP_CRIT` | `40`, `60`, `70` | °C colour bands |
 | `GPU_POWER_WARN`, `GPU_POWER_HOT`, `GPU_POWER_CRIT` | `25`, `100`, `200` | watt colour bands |
@@ -346,6 +347,8 @@ Each GPU is a column of four rows: the name in the terminal's default text colou
 | Temperature | < 50°C | 50–60 | 60–70 | ≥ 70 |
 | Power | < 50W | 50–75 | 75–150 | ≥ 150 |
 | VRAM used | < 25% | 25–50 | 50–75 | ≥ 75 |
+
+A `System` column sits in front of the GPUs with two host figures: total CPU usage (`CPU 48%`, all cores together) and RAM used out of the total (`RAM 32/126 GiB`, used is total minus available). They come from `/proc/stat` and `/proc/meminfo`, which a container without memory limits reads from the host, so they cover the whole machine, including a model running on the CPU. Both use the VRAM colour bands. CPU shows `…` until the second sample. `SYS_STATS=off` hides the column; with `GPU_STATS=off` and `SYS_STATS=on` only the system figures are shown. On Docker Desktop the figures are for its VM.
 
 `50–60` means 50 ≤ t < 60, and the same pattern for the other open ends. The VRAM row looks like `18583/20475 MiB 91%`. nvidia-smi temperature can be a fraction (`60.06`). The panel rounds the number and colours the raw value.
 

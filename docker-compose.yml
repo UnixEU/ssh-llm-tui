@@ -54,6 +54,8 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: utility
       GPU_STATS: auto
       GPU_POLL_INTERVAL: 2s
+      # Host CPU usage and RAM in front of the GPU columns.
+      SYS_STATS: "on"
       GPU_TEMP_WARN: "40"
       GPU_TEMP_HOT: "60"
       GPU_TEMP_CRIT: "70"

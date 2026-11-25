@@ -9,6 +9,10 @@
 - Every `*_BYTES` setting accepts sizes with a binary unit (`512k`, `256M`, `256MiB`, `1G`, `1.5G`) as well as plain bytes.
 - At start the server warns when a per-user limit is larger than the filesystem that holds it.
 
+### CPU and RAM in the panel
+
+- The top-right panel shows a `System` column in front of the GPUs: total host CPU usage (`CPU 48%`) and RAM used out of the total (`RAM 32/126 GiB`), read from `/proc`. Coloured with the VRAM bands. `SYS_STATS=off` hides it.
+
 ## 1.3.1
 
 - The welcome banner is copied into the image at build time from `banner.txt`. It no longer depends on a host bind mount. Edit `banner.txt` and rebuild to customise it. `WELCOME_MESSAGE` is still the fallback when the file is missing, empty, or does not fit the terminal.

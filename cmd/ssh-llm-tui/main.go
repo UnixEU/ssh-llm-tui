@@ -23,6 +23,7 @@ import (
 	"github.com/UnixEU/ssh-llm-tui/internal/session"
 	"github.com/UnixEU/ssh-llm-tui/internal/sshserver"
 	"github.com/UnixEU/ssh-llm-tui/internal/sysmem"
+	"github.com/UnixEU/ssh-llm-tui/internal/sysstat"
 	"github.com/UnixEU/ssh-llm-tui/internal/ui"
 	"github.com/UnixEU/ssh-llm-tui/internal/uploads"
 	tea "github.com/charmbracelet/bubbletea"
@@ -90,6 +91,11 @@ func run() error {
 	defer stop()
 	gpus := gpuinfo.NewPoller(cfg.GPU.Mode, cfg.GPU.SMIPath, cfg.GPU.Interval.Duration())
 	go gpus.Start(ctx)
+	var sys *sysstat.Poller
+	if cfg.SysStatsOn() {
+		sys = sysstat.NewPoller(cfg.GPU.Interval.Duration())
+		go sys.Start(ctx)
+	}
 	resolver, learned := setupFit(logger, cfg)
 	srv, err := sshserver.NewWith(cfg.Server, func(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 		model := ui.New(ui.Options{
@@ -100,6 +106,7 @@ func run() error {
 			Downloads: dl,
 			Edits:     workspaces,
 			GPU:       gpus,
+			Sys:       sys,
 			Unloader:  tracker,
 			Budget:    cfg.Uploads.TokenBudget,
 			Resolver:  resolver,

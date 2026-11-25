@@ -14,6 +14,7 @@ import (
 	"github.com/UnixEU/ssh-llm-tui/internal/gpu"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpuinfo"
 	"github.com/UnixEU/ssh-llm-tui/internal/sysmem"
+	"github.com/UnixEU/ssh-llm-tui/internal/sysstat"
 	"github.com/UnixEU/ssh-llm-tui/internal/think"
 	"github.com/UnixEU/ssh-llm-tui/internal/uploads"
 	"github.com/charmbracelet/bubbles/list"
@@ -80,8 +81,10 @@ type Options struct {
 	// Downloads receives exported changes. Nil disables export.
 	Downloads *downloads.Store
 	// Edits holds the per-user edited versions. Nil disables edit mode.
-	Edits    *edits.Manager
-	GPU      *gpuinfo.Poller
+	Edits *edits.Manager
+	GPU   *gpuinfo.Poller
+	// Sys samples host CPU and RAM for the panel. Nil hides them.
+	Sys      *sysstat.Poller
 	Unloader SoleUnloader
 	Budget   int
 	// Resolver reads model headers for the fit check. Nil disables it.
@@ -106,6 +109,7 @@ type Model struct {
 	edits     *edits.Manager
 	protocol  edits.Protocol
 	gpu       *gpuinfo.Poller
+	sys       *sysstat.Poller
 	unloader  SoleUnloader
 	budget    int
 	// baseBudget is CONTEXT_TOKEN_BUDGET, used until a context is chosen.
@@ -257,6 +261,7 @@ func New(opts Options) *Model {
 		protocol:  edits.Blocks{},
 		editOn:    opts.Config.EditOn(),
 		gpu:       opts.GPU,
+		sys:       opts.Sys,
 		unloader:  opts.Unloader,
 		budget:    opts.Budget,
 		resolver:  opts.Resolver,

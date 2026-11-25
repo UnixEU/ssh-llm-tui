@@ -9,6 +9,7 @@ import (
 
 	"github.com/UnixEU/ssh-llm-tui/internal/config"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpuinfo"
+	"github.com/UnixEU/ssh-llm-tui/internal/sysstat"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -97,6 +98,12 @@ func memHeat(used, total int, th config.GPU) heat {
 // on one row they wrap, up to two block-rows. Narrower terminals get one
 // coloured line per GPU. forceCompact skips the columns.
 func renderGPUPanel(r *lipgloss.Renderer, gpus []gpuinfo.GPU, width int, th config.GPU, forceCompact bool) string {
+	return renderStatsPanel(r, gpus, nil, width, th, forceCompact)
+}
+
+// renderStatsPanel is the GPU panel with an optional system column (host
+// CPU usage and RAM) in front of the GPUs.
+func renderStatsPanel(r *lipgloss.Renderer, gpus []gpuinfo.GPU, sys *sysstat.Snapshot, width int, th config.GPU, forceCompact bool) string {
 	if r == nil {
 		r = lipgloss.NewRenderer(io.Discard)
 	}
@@ -104,17 +111,28 @@ func renderGPUPanel(r *lipgloss.Renderer, gpus []gpuinfo.GPU, width int, th conf
 		width = 1
 	}
 	ordered := orderGPUs(gpus)
-	if len(ordered) == 0 {
+	hasSys := sys != nil && (sys.CPUKnown || sys.MemKnown)
+	if len(ordered) == 0 && !hasSys {
 		return ""
 	}
 	if !forceCompact {
-		if panel, ok := joinGPUColumns(r, ordered, width, th); ok {
+		var cols []string
+		if hasSys {
+			cols = append(cols, sysColumn(r, *sys, th))
+		}
+		for _, g := range ordered {
+			cols = append(cols, gpuColumn(r, g, th))
+		}
+		if panel, ok := joinColumns(cols, width); ok {
 			return panel
 		}
 	}
-	lines := make([]string, len(ordered))
-	for i, g := range ordered {
-		lines[i] = clipPlainWidth(compactGPULine(r, g, th), width)
+	var lines []string
+	if hasSys {
+		lines = append(lines, clipPlainWidth(sysLine(r, *sys, th), width))
+	}
+	for _, g := range ordered {
+		lines = append(lines, clipPlainWidth(compactGPULine(r, g, th), width))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -132,12 +150,10 @@ func orderGPUs(gpus []gpuinfo.GPU) []gpuinfo.GPU {
 	return out
 }
 
-func joinGPUColumns(r *lipgloss.Renderer, gpus []gpuinfo.GPU, width int, th config.GPU) (string, bool) {
-	cols := make([]string, len(gpus))
-	widths := make([]int, len(gpus))
-	for i, g := range gpus {
-		cols[i] = gpuColumn(r, g, th)
-		widths[i] = lipgloss.Width(cols[i])
+func joinColumns(cols []string, width int) (string, bool) {
+	widths := make([]int, len(cols))
+	for i, c := range cols {
+		widths[i] = lipgloss.Width(c)
 		if widths[i] > width {
 			return "", false
 		}
@@ -174,6 +190,65 @@ func joinGPUColumns(r *lipgloss.Renderer, gpus []gpuinfo.GPU, width int, th conf
 		return "", false
 	}
 	return strings.Join(rows, "\n"), true
+}
+
+// cpuText is "CPU 48%", or "CPU …" before the second sample.
+func cpuText(s sysstat.Snapshot) string {
+	if !s.CPUKnown {
+		return "CPU …"
+	}
+	return fmt.Sprintf("CPU %d%%", int(math.Round(s.CPUPercent)))
+}
+
+// ramText is "RAM 32/126 GiB", one decimal below 10 GiB.
+func ramText(s sysstat.Snapshot) string {
+	if !s.MemKnown {
+		return "RAM n/a"
+	}
+	used := float64(s.MemUsed) / float64(1<<30)
+	total := float64(s.MemTotal) / float64(1<<30)
+	if total < 10 {
+		return fmt.Sprintf("RAM %.1f/%.1f GiB", used, total)
+	}
+	return fmt.Sprintf("RAM %.0f/%.0f GiB", used, total)
+}
+
+func sysHeats(s sysstat.Snapshot, th config.GPU) (cpu, ram lipgloss.AdaptiveColor) {
+	cpu, ram = gpuNeutral, gpuNeutral
+	if s.CPUKnown {
+		cpu = heatColor(heatBand(s.CPUPercent, th.MemWarn, th.MemHot, th.MemCrit))
+	}
+	if s.MemKnown && s.MemTotal > 0 {
+		ram = heatColor(heatBand(float64(s.MemUsed)/float64(s.MemTotal)*100, th.MemWarn, th.MemHot, th.MemCrit))
+	}
+	return cpu, ram
+}
+
+func sysColumn(r *lipgloss.Renderer, s sysstat.Snapshot, th config.GPU) string {
+	cpuC, ramC := sysHeats(s, th)
+	lines := []string{
+		"System",
+		r.NewStyle().Foreground(cpuC).Render(cpuText(s)),
+		r.NewStyle().Foreground(ramC).Render(ramText(s)),
+		"",
+	}
+	w := 0
+	for _, ln := range lines {
+		if n := lipgloss.Width(ln); n > w {
+			w = n
+		}
+	}
+	for i, ln := range lines {
+		if pad := w - lipgloss.Width(ln); pad > 0 {
+			lines[i] = ln + strings.Repeat(" ", pad)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func sysLine(r *lipgloss.Renderer, s sysstat.Snapshot, th config.GPU) string {
+	cpuC, ramC := sysHeats(s, th)
+	return r.NewStyle().Foreground(cpuC).Render(cpuText(s)) + " " + r.NewStyle().Foreground(ramC).Render(ramText(s))
 }
 
 func columnGap(height int) string {
