@@ -2,7 +2,7 @@
 
 SSH terminal chat for local models served by [Docker Model Runner](https://docs.docker.com/ai/model-runner/) (DMR). Connect with `ssh -p 2222 user@host` and you get this app instead of a shell.
 
-Version 1.4.1. The interface is a terminal UI, built with Go and the Charm stack (Wish, Bubble Tea, Lip Gloss, Bubbles). Released under the MIT license. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
+Version 1.4.2. The interface is a terminal UI, built with Go and the Charm stack (Wish, Bubble Tea, Lip Gloss, Bubbles). Released under the MIT license. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
 
 The container talks to DMR only over HTTP. It does not mount the Docker socket and it does not call the `docker` CLI, so it cannot start containers. Models are pulled through DMR's HTTP API from the Docker Hub screen (`p` on the model list), which can be turned off.
 
@@ -161,7 +161,8 @@ Settings ending in `_BYTES` accept plain bytes (`10485760`) or a size with a bin
 | `NON_VISION_MODELS` | empty | comma-separated globs that skip images |
 | `GPU_STATS` | `auto` | `auto` or `off` |
 | `GPU_POLL_INTERVAL` | `2s` | nvidia-smi poll, also the CPU/RAM sample interval |
-| `SYS_STATS` | `on` | host CPU usage and RAM next to the GPU panel. `off` hides them |
+| `SYS_STATS` | `on` | host CPU usage and RAM in the status block. `off` hides them |
+| `STATUS_ROWS` | `4` | lines of the top-right status block (1–16); more GPUs show as `+N more GPUs` |
 | `NVIDIA_SMI` | `nvidia-smi` | path to the binary |
 | `GPU_TEMP_WARN`, `GPU_TEMP_HOT`, `GPU_TEMP_CRIT` | `40`, `60`, `70` | °C colour bands |
 | `GPU_POWER_WARN`, `GPU_POWER_HOT`, `GPU_POWER_CRIT` | `25`, `100`, `200` | watt colour bands |
@@ -367,9 +368,18 @@ Small models follow the format less reliably, and larger edits need context: rai
 
 ## GPU panel
 
-Every screen keeps a GPU panel in the top-right. One poller serves every session (`GPU_POLL_INTERVAL`, default 2s). `GPU_STATS=off` hides it. If `nvidia-smi` is missing, the line is `GPU n/a` and chat still works.
+Every screen keeps a status block in the top-right. One poller serves every session (`GPU_POLL_INTERVAL`, default 2s). `GPU_STATS=off` hides the GPU rows. If `nvidia-smi` is missing, the GPU row says `n/a` and chat still works.
 
-Each GPU is a column of four rows: the name in the terminal's default text colour, VRAM used/total and percent, temperature, and power. A model loaded on that GPU (`nvidia-smi` compute memory) makes the name bold and adds `*`. Those GPUs are drawn first. Several GPUs sit side by side. If they do not fit on one row, the columns wrap onto a second block. Narrower terminals use one coloured line per GPU.
+The block is a small table, right-aligned as a whole, with the same height on every screen:
+
+```
+Host                     RAM 11/720 GiB  CPU 1%
+GPU1*  GeForce RTX 4090    2.9/24.0 GiB     12%  31°C  69W
+GPU0   GeForce RTX 4090    0.0/24.0 GiB      0%  25°C  24W
+                                                +6 more GPUs
+```
+
+Each GPU row has the name in the terminal's default text colour, VRAM used/total, utilization, temperature and power. VRAM is in GiB on cards with 10 GiB or more, otherwise in MiB. A model loaded on that GPU (`nvidia-smi` compute memory) makes the row bold and adds `*`; those GPUs come first. `STATUS_ROWS` (default 4, 1–16) caps the rows; the last one then counts the GPUs left out. The block never wraps: on narrower terminals the GPU name is shortened and then dropped, then power, temperature and load. The screen title is shortened before it can reach the block.
 
 | | green | yellow | orange | red |
 | --- | --- | --- | --- | --- |
@@ -377,9 +387,9 @@ Each GPU is a column of four rows: the name in the terminal's default text colou
 | Power | < 50W | 50–75 | 75–150 | ≥ 150 |
 | VRAM used | < 25% | 25–50 | 50–75 | ≥ 75 |
 
-A `System` column sits in front of the GPUs with two host figures: total CPU usage (`CPU 48%`, all cores together) and RAM used out of the total (`RAM 32/126 GiB`, used is total minus available). They come from `/proc/stat` and `/proc/meminfo`, which a container without memory limits reads from the host, so they cover the whole machine, including a model running on the CPU. Both use the VRAM colour bands. CPU shows `…` until the second sample. `SYS_STATS=off` hides the column; with `GPU_STATS=off` and `SYS_STATS=on` only the system figures are shown. On Docker Desktop the figures are for its VM.
+The `Host` row comes first with two host figures: total CPU usage (`CPU 48%`, all cores together) and RAM used out of the total (`RAM 32/126 GiB`, used is total minus available). They come from `/proc/stat` and `/proc/meminfo`, which a container without memory limits reads from the host, so they cover the whole machine, including a model running on the CPU. Both use the VRAM colour bands. CPU shows `…` until the second sample. `SYS_STATS=off` hides the row; with `GPU_STATS=off` and `SYS_STATS=on` only the system figures are shown. On Docker Desktop the figures are for its VM.
 
-`50–60` means 50 ≤ t < 60, and the same pattern for the other open ends. The VRAM row looks like `18583/20475 MiB 91%`. nvidia-smi temperature can be a fraction (`60.06`). The panel rounds the number and colours the raw value.
+`50–60` means 50 ≤ t < 60, and the same pattern for the other open ends. nvidia-smi temperature can be a fraction (`60.06`). The block rounds the number and colours the raw value.
 
 The runtime image is Debian (glibc) so the NVIDIA toolkit can inject `nvidia-smi`. `utility` is statistics only. It does not take the GPU away from Docker Model Runner. After changing compose, recreate the container.
 
@@ -537,7 +547,7 @@ A model list entry looks like `docker.io/ai/gpt-oss:20b` with an empty `dmr` obj
 go test ./...
 go vet ./...
 go test -race ./...
-docker build -t ssh-llm-tui:1.4.1 .
+docker build -t ssh-llm-tui:1.4.2 .
 ```
 
 Go 1.24 or newer. The module downloads a newer toolchain if the system Go is older.

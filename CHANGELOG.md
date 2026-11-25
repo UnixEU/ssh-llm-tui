@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.2
+
+- The top-right status is one table, right-aligned as a block: a `Host` row (RAM, CPU) and a row per GPU with aligned columns for name, VRAM, utilization, temperature and power. Rows no longer shift against each other on hosts with several GPUs or a lot of RAM.
+- The block has the same height on every screen and never wraps. Narrow terminals shorten and then drop the GPU name, then power, temperature and load. The title is shortened before it can touch the block.
+- `STATUS_ROWS` (default 4) caps the block; further GPUs are summed up as `+N more GPUs`. GPUs running a model come first.
+- VRAM is shown in GiB on cards with 10 GiB or more (`1.0/24.0 GiB`). GPU utilization comes from `nvidia-smi` (`utilization.gpu`) and is left blank when the driver does not report it.
+
 ## 1.4.1
 
 - Docker Hub screen: only `y` starts a pull; enter no longer confirms, so a repeated enter cannot queue a large download.

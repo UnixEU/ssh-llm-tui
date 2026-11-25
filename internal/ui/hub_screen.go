@@ -482,7 +482,7 @@ func (m *Model) viewHub(bodyH int) string {
 	if info, err := m.readModelDisk(); err == nil {
 		right = "model disk: " + config.FormatBytes(info.FreeBytes) + " free"
 	}
-	header := m.fitHeader("Docker Hub · "+m.hubc.Namespace()+"/", right, 2)
+	header := m.fitHeader("Docker Hub · "+m.hubc.Namespace()+"/", right, max(1, bodyH-4))
 	search := m.clipWidth(h.query.View())
 	count := ""
 	switch {

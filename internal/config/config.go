@@ -241,6 +241,9 @@ type GPU struct {
 	// SysStats is on or off: host CPU usage and RAM next to the GPU stats.
 	// Its colours use the memory bands.
 	SysStats string `yaml:"sys_stats"`
+	// StatusRows caps the lines of the top-right status block (host row
+	// plus GPU rows). Extra GPUs are summed up as "+N more GPUs".
+	StatusRows int `yaml:"status_rows"`
 }
 
 // SysStatsOn reports whether the CPU and RAM figures are shown.
@@ -502,6 +505,9 @@ func (c *Config) normalize() {
 	if c.GPU.MemCrit <= 0 {
 		c.GPU.MemCrit = 90
 	}
+	if c.GPU.StatusRows <= 0 {
+		c.GPU.StatusRows = 4
+	}
 	c.normalizeFit()
 }
 
@@ -741,6 +747,13 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 		c.Chat.KeepTurns = n
 	}
 	set("SYS_STATS", &c.GPU.SysStats)
+	if v, ok := lookup(getenv, "STATUS_ROWS"); ok {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 16 {
+			return fmt.Errorf("STATUS_ROWS must be 1-16")
+		}
+		c.GPU.StatusRows = n
+	}
 	set("EDIT_MODE", &c.Edit.Mode)
 	set("EDIT_PROTOCOL", &c.Edit.Protocol)
 	set("EDIT_ALLOW_NEW", &c.Edit.AllowNew)

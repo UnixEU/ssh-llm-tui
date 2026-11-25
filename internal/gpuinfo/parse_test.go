@@ -109,3 +109,16 @@ func TestParseMemoryFree(t *testing.T) {
 		t.Fatalf("fallback free %d", snap.GPUs[1].MemFreeMiB)
 	}
 }
+
+func TestParseQueryUtilization(t *testing.T) {
+	snap, err := ParseQuery("0, Name, GPU-a, 100, 200, 47, 12, 100, 37\n1, Name, GPU-b, 100, 200, 47, 12, 100, [N/A]\n2, Name, GPU-c, 100, 200, 47, 12\n", "")
+	if err != nil || len(snap.GPUs) != 3 {
+		t.Fatalf("%+v %v", snap, err)
+	}
+	if g := snap.GPUs[0]; !g.UtilKnown || g.UtilPct != 37 {
+		t.Fatalf("util %+v", g)
+	}
+	if snap.GPUs[1].UtilKnown || snap.GPUs[2].UtilKnown {
+		t.Fatalf("missing util should be unknown: %+v", snap.GPUs[1:])
+	}
+}

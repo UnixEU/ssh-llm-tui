@@ -159,7 +159,7 @@ func (m *Model) viewFiles(bodyH int) string {
 			incl++
 		}
 	}
-	header := m.fitHeader("Files", fmt.Sprintf("%d files · %d included", len(files), incl), 2)
+	header := m.fitHeader("Files", fmt.Sprintf("%d files · %d included", len(files), incl), max(1, bodyH-4))
 	p, _, target := m.sshTarget()
 	info := fmt.Sprintf("%s · prompt %s · upload: scp %s-r dir %s:uploads/", m.uploadQuota(), tokenGauge(includedTokens(files), m.budget), p, target)
 	infoLine := m.clipWidth(m.theme.muted.Render(info))

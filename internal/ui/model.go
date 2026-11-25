@@ -244,7 +244,7 @@ func New(opts Options) *Model {
 		opts.User = "guest"
 	}
 	if strings.TrimSpace(opts.Version) == "" {
-		opts.Version = "1.4.1"
+		opts.Version = "1.4.2"
 	}
 	if opts.Budget <= 0 {
 		opts.Budget = uploads.DefaultBudget
