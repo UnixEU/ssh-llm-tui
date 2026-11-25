@@ -66,8 +66,8 @@ func (m *Model) viewWelcome() string {
 	if raw, ok := readBanner(m.cfg.Welcome.BannerFile); ok {
 		if centered, fit := centerBanner(raw, m.width); fit {
 			art := m.paintBanner(centered)
-			if panel := m.gpuPanel(false); panel != "" {
-				return joinLines(m.alignRightBlock(panel), art)
+			if block := m.statusBlock(); block != "" {
+				return joinLines(block, art)
 			}
 			return art
 		}
@@ -361,37 +361,89 @@ func (m *Model) helpLabels(short bool) []string {
 }
 
 func (m *Model) headerBlock(title, right string) string {
-	return m.composeHeader(title, right, false)
+	return m.composeHeader(title, right, m.statusMaxRows())
 }
 
+// fitHeader is headerBlock with at most maxH lines.
 func (m *Model) fitHeader(title, right string, maxH int) string {
 	if maxH < 1 {
 		return ""
 	}
-	block := m.composeHeader(title, right, false)
-	if lineCount(block) <= maxH {
-		return block
-	}
-	block = m.composeHeader(title, right, true)
-	if lineCount(block) <= maxH {
-		return block
-	}
-	return m.exact(block, maxH, false)
+	return m.composeHeader(title, right, min(maxH, m.statusMaxRows()))
 }
 
-func (m *Model) composeHeader(title, right string, compact bool) string {
+// statusMaxRows is how many lines the status block may use (STATUS_ROWS).
+func (m *Model) statusMaxRows() int {
+	if n := m.cfg.GPU.StatusRows; n > 0 {
+		return n
+	}
+	return 4
+}
+
+// composeHeader puts the title on the left of the first line and the
+// status block, right-aligned as one unit, on the right. Every screen gets
+// the same block height. The title is shortened before it can touch the
+// block.
+func (m *Model) composeHeader(title, right string, maxRows int) string {
 	left := title
 	if right != "" && !strings.HasPrefix(right, "v") {
 		left = title + " · " + right
 	}
-	panel := m.gpuPanel(compact)
-	if panel == "" {
+	rows := m.statusData()
+	if len(rows) == 0 || m.width < 1 {
 		return m.theme.titleLine(m.width, left, "v"+m.version)
 	}
-	return m.placeBeside(left, panel)
+	const minTitle = 12
+	gap := 2
+	leftW := lipgloss.Width(left)
+	if strings.TrimSpace(left) == "" {
+		leftW, gap = 0, 0
+	}
+	minBlock := minStatusWidth(rows)
+	avail := m.width - leftW - gap
+	if avail < minBlock {
+		if m.width-minBlock-gap < min(minTitle, leftW) {
+			// Too narrow for both: keep the title.
+			return m.theme.titleLine(m.width, left, "")
+		}
+		avail = minBlock
+		left = ansi.Truncate(left, m.width-minBlock-gap, "…")
+		leftW = lipgloss.Width(left)
+	}
+	lines := renderStatus(m.theme.r, rows, avail, maxRows)
+	if len(lines) == 0 {
+		return m.theme.titleLine(m.width, left, "v"+m.version)
+	}
+	blockW := lipgloss.Width(lines[0])
+	indent := strings.Repeat(" ", max(0, m.width-blockW))
+	out := make([]string, 0, len(lines))
+	first := indent + lines[0]
+	if leftW > 0 {
+		leftS := m.theme.title.Render(left)
+		first = leftS + strings.Repeat(" ", max(gap, m.width-lipgloss.Width(leftS)-blockW)) + lines[0]
+		first = m.clipWidth(first)
+	}
+	out = append(out, first)
+	for _, ln := range lines[1:] {
+		out = append(out, indent+ln)
+	}
+	return strings.Join(out, "\n")
 }
 
-func (m *Model) gpuPanel(forceCompact bool) string {
+// statusBlock is the status table alone, right-aligned (welcome banner).
+func (m *Model) statusBlock() string {
+	lines := renderStatus(m.theme.r, m.statusData(), m.width, m.statusMaxRows())
+	if len(lines) == 0 {
+		return ""
+	}
+	indent := strings.Repeat(" ", max(0, m.width-lipgloss.Width(lines[0])))
+	for i := range lines {
+		lines[i] = indent + lines[i]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m *Model) statusData() []statusRow {
 	var sys *sysstat.Snapshot
 	if m.sys != nil && m.cfg.SysStatsOn() {
 		s := m.sys.Snapshot()
@@ -404,64 +456,12 @@ func (m *Model) gpuPanel(forceCompact bool) string {
 		switch {
 		case snap.Disabled:
 		case !snap.OK || len(snap.GPUs) == 0:
-			note = nonEmpty(snap.Message, "GPU n/a")
+			note = strings.TrimSpace(strings.TrimPrefix(nonEmpty(snap.Message, "GPU n/a"), "GPU "))
 		default:
 			gpus = snap.GPUs
 		}
 	}
-	panel := renderStatsPanel(m.theme.r, gpus, sys, m.width, m.gpuThresholds(), forceCompact)
-	if note == "" {
-		return panel
-	}
-	if panel == "" {
-		return note
-	}
-	if lipgloss.Width(panel)+3+lipgloss.Width(note) <= m.width && !strings.Contains(panel, "\n") {
-		return panel + " · " + note
-	}
-	return panel + "\n" + note
-}
-
-func (m *Model) placeBeside(left, panel string) string {
-	lines := strings.Split(panel, "\n")
-	var out []string
-	leftS := ""
-	if strings.TrimSpace(left) != "" {
-		leftS = m.theme.title.Render(left)
-	}
-	first := lines[0]
-	if leftS != "" && lipgloss.Width(leftS)+1+lipgloss.Width(first) <= m.width {
-		gap := m.width - lipgloss.Width(leftS) - lipgloss.Width(first)
-		if gap < 1 {
-			gap = 1
-		}
-		out = append(out, leftS+strings.Repeat(" ", gap)+first)
-		lines = lines[1:]
-	} else if leftS != "" {
-		out = append(out, m.clipWidth(leftS))
-	}
-	for _, ln := range lines {
-		out = append(out, m.alignRight(ln))
-	}
-	return strings.Join(out, "\n")
-}
-
-func (m *Model) alignRight(line string) string {
-	if m.width < 1 {
-		return ""
-	}
-	if lipgloss.Width(line) >= m.width {
-		return m.clipWidth(line)
-	}
-	return strings.Repeat(" ", m.width-lipgloss.Width(line)) + line
-}
-
-func (m *Model) alignRightBlock(block string) string {
-	var out []string
-	for _, ln := range strings.Split(block, "\n") {
-		out = append(out, m.alignRight(ln))
-	}
-	return strings.Join(out, "\n")
+	return statusRows(gpus, sys, note, m.gpuThresholds())
 }
 
 // chatFileBox is the full-width file dock. maxH is how many lines the chat

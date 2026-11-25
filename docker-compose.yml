@@ -11,7 +11,7 @@ name: ssh-llm-tui
 services:
   ssh-llm-tui:
     build: .
-    image: ssh-llm-tui:1.4.1
+    image: ssh-llm-tui:1.4.2
     container_name: ssh-llm-tui
     init: true
     read_only: true
@@ -54,8 +54,10 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: utility
       GPU_STATS: auto
       GPU_POLL_INTERVAL: 2s
-      # Host CPU usage and RAM in front of the GPU columns.
+      # Host CPU usage and RAM above the GPU rows.
       SYS_STATS: "on"
+      # Lines of the top-right status block; more GPUs show as "+N more GPUs".
+      STATUS_ROWS: "4"
       GPU_TEMP_WARN: "40"
       GPU_TEMP_HOT: "60"
       GPU_TEMP_CRIT: "70"

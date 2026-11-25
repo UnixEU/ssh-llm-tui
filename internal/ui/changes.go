@@ -505,7 +505,7 @@ func (m *Model) viewChanges(bodyH int) string {
 	if m.editOn {
 		right = "edit mode on"
 	}
-	header := m.fitHeader("Changes", right, 2)
+	header := m.fitHeader("Changes", right, max(1, bodyH-4))
 	entries := m.changeEntries()
 	pending, accepted := 0, 0
 	for _, e := range entries {

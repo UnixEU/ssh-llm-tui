@@ -7,7 +7,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
-    -ldflags="-s -w -X main.version=1.4.1" \
+    -ldflags="-s -w -X main.version=1.4.2" \
     -o /out/ssh-llm-tui ./cmd/ssh-llm-tui
 
 # glibc, not Alpine. The NVIDIA container toolkit injects nvidia-smi and its

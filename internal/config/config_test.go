@@ -62,6 +62,9 @@ func TestLoadBakedInDefaults(t *testing.T) {
 	if cfg.GPU.MemWarn != 40 || cfg.GPU.MemHot != 60 || cfg.GPU.MemCrit != 90 {
 		t.Fatalf("mem bands %+v", cfg.GPU)
 	}
+	if cfg.GPU.StatusRows != 4 {
+		t.Fatalf("status rows %d", cfg.GPU.StatusRows)
+	}
 	if cfg.Chat.Markdown != "on" || !cfg.MarkdownOn() {
 		t.Fatalf("markdown %+v", cfg.Chat.Markdown)
 	}
@@ -419,6 +422,20 @@ func TestHubDefaultsAndEnv(t *testing.T) {
 	} {
 		if _, err := Load(LoadOptions{Getenv: envFrom(bad)}); err == nil {
 			t.Fatalf("%v should be rejected", bad)
+		}
+	}
+}
+
+func TestStatusRowsEnv(t *testing.T) {
+	env := map[string]string{"STATUS_ROWS": "6"}
+	cfg, err := Load(LoadOptions{Getenv: func(k string) string { return env[k] }})
+	if err != nil || cfg.GPU.StatusRows != 6 {
+		t.Fatalf("%v %v", cfg.GPU.StatusRows, err)
+	}
+	for _, bad := range []string{"0", "17", "x"} {
+		env["STATUS_ROWS"] = bad
+		if _, err := Load(LoadOptions{Getenv: func(k string) string { return env[k] }}); err == nil {
+			t.Fatalf("STATUS_ROWS=%s accepted", bad)
 		}
 	}
 }

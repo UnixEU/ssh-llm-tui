@@ -30,7 +30,11 @@ type GPU struct {
 	TempKnown  bool
 	PowerW     float64
 	PowerKnown bool
-	AppsMiB    int
+	// UtilPct is utilization.gpu in percent; UtilKnown is false when the
+	// driver does not report it.
+	UtilPct   float64
+	UtilKnown bool
+	AppsMiB   int
 }
 
 // Snapshot is the latest sample.
@@ -46,7 +50,7 @@ type Snapshot struct {
 
 // ParseQuery reads the two nvidia-smi CSV blobs.
 //
-//	nvidia-smi --query-gpu=index,name,uuid,memory.used,memory.total,temperature.gpu,power.draw,memory.free --format=csv,noheader,nounits
+//	nvidia-smi --query-gpu=index,name,uuid,memory.used,memory.total,temperature.gpu,power.draw,memory.free,utilization.gpu --format=csv,noheader,nounits
 //	nvidia-smi --query-compute-apps=gpu_uuid,used_memory --format=csv,noheader,nounits
 func ParseQuery(gpusCSV, appsCSV string) (Snapshot, error) {
 	snap := Snapshot{OK: true, At: time.Now()}
@@ -81,6 +85,12 @@ func ParseQuery(gpusCSV, appsCSV string) (Snapshot, error) {
 		}
 		if g.MemFreeMiB < 0 {
 			g.MemFreeMiB = 0
+		}
+		if len(cols) >= 9 {
+			if u, ok := atof(cols[8]); ok {
+				g.UtilPct = u
+				g.UtilKnown = true
+			}
 		}
 		snap.GPUs = append(snap.GPUs, g)
 	}
@@ -207,7 +217,7 @@ func (p *Poller) sample(ctx context.Context) {
 }
 
 func (p *Poller) query(ctx context.Context) Snapshot {
-	gpus, err := p.run(ctx, "--query-gpu=index,name,uuid,memory.used,memory.total,temperature.gpu,power.draw,memory.free", "--format=csv,noheader,nounits")
+	gpus, err := p.run(ctx, "--query-gpu=index,name,uuid,memory.used,memory.total,temperature.gpu,power.draw,memory.free,utilization.gpu", "--format=csv,noheader,nounits")
 	if err != nil {
 		return Snapshot{OK: false, Message: "GPU n/a", At: time.Now()}
 	}
