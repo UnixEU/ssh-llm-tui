@@ -223,3 +223,62 @@ func waitUntil(t *testing.T, cond func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestHubEnterDoesNotConfirmPull(t *testing.T) {
+	f := newHubFixture(t, 50<<30)
+	m := f.m
+	f.open(t)
+	key(m, "enter") // opens the check for "latest"
+	if m.hub.confirm == nil {
+		t.Fatal("enter on a tag opens the space check")
+	}
+	key(m, "enter")
+	key(m, "enter")
+	if len(f.pulls.Jobs()) != 0 || m.hub.confirm == nil {
+		t.Fatal("enter must not queue a pull; only y does")
+	}
+}
+
+func TestHubMarksPulledInSessionAndShowsSize(t *testing.T) {
+	f := newHubFixture(t, 50<<30)
+	m := f.m
+	f.open(t)
+	key(m, "j")
+	key(m, "enter")
+	key(m, "y")
+	waitUntil(t, func() bool { j := f.pulls.Jobs(); return len(j) == 1 && j[0].State == pull.Running })
+	f.release <- struct{}{}
+	waitUntil(t, func() bool { return f.pulls.Jobs()[0].State == pull.Done })
+	v := m.View()
+	if !strings.Contains(v, "8b-q8_0") || strings.Count(v, "✓ pulled") != 2 {
+		t.Fatalf("both tags should be marked pulled:\n%s", v)
+	}
+	if !strings.Contains(v, "done      8.1 GiB") {
+		t.Fatalf("finished pull should show its size:\n%s", v)
+	}
+}
+
+func TestHubTagPaneBeforeEnter(t *testing.T) {
+	f := newHubFixture(t, 50<<30)
+	m := f.m
+	key(m, "p")
+	m.Update(m.fetchRepos()())
+	if v := m.View(); !strings.Contains(v, "enter lists the tags") || strings.Contains(v, "Reading tags") {
+		t.Fatalf("tag pane before enter:\n%s", v)
+	}
+}
+
+func TestModelsEmptyMentionsHubAndClearsLoading(t *testing.T) {
+	f := newHubFixture(t, 50<<30)
+	m := f.m
+	m.models = nil
+	m.Update(m.startFetch()())
+	m.Update(modelsMsg{gen: m.gen, models: nil})
+	v := m.View()
+	if strings.Contains(v, "Fetching models") {
+		t.Fatalf("loading text should go once the list arrived:\n%s", v)
+	}
+	if !strings.Contains(v, "press p to search Docker Hub") {
+		t.Fatalf("empty list should mention p:\n%s", v)
+	}
+}

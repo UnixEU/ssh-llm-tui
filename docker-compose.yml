@@ -11,7 +11,7 @@ name: ssh-llm-tui
 services:
   ssh-llm-tui:
     build: .
-    image: ssh-llm-tui:1.4.0
+    image: ssh-llm-tui:1.4.1
     container_name: ssh-llm-tui
     init: true
     read_only: true

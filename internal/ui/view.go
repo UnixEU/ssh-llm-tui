@@ -107,7 +107,11 @@ func (m *Model) viewModels() string {
 			"Press r to retry.",
 		}, "\n"))
 	case len(m.models) == 0:
-		main = m.boxed(m.cfg.Models.Empty)
+		empty := m.cfg.Models.Empty
+		if m.hubReady() {
+			empty = strings.TrimRight(empty, "\n") + "\n\nOr press p to search Docker Hub and pull one from here."
+		}
+		main = m.boxed(empty)
 	default:
 		main = m.list.View()
 	}

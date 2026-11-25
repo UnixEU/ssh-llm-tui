@@ -244,7 +244,7 @@ func New(opts Options) *Model {
 		opts.User = "guest"
 	}
 	if strings.TrimSpace(opts.Version) == "" {
-		opts.Version = "1.4.0"
+		opts.Version = "1.4.1"
 	}
 	if opts.Budget <= 0 {
 		opts.Budget = uploads.DefaultBudget
@@ -524,6 +524,9 @@ func (m *Model) onModels(msg modelsMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.fetching = false
+	if m.status == m.cfg.Models.Loading {
+		m.status = ""
+	}
 	if msg.err != nil {
 		m.models = nil
 		m.errText = oneLine(msg.err)

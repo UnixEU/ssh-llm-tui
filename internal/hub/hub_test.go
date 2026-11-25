@@ -19,7 +19,7 @@ func hubServer(t *testing.T, hits *int32) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/v2/repositories/ai/" && r.URL.Query().Get("page") == "":
-			fmt.Fprintf(w, `{"next":"%s/v2/repositories/ai/?page=2","results":[{"name":"gemma3","pull_count":500,"description":"Google Gemma"},{"name":"qwen3-vllm","pull_count":900}]}`, srv.URL)
+			fmt.Fprintf(w, `{"next":"%s/v2/repositories/ai/?page=2","results":[{"name":"gemma3","pull_count":500,"description":"Google Gemma"},{"name":"qwen3-vllm","pull_count":900},{"name":"gemma4-safetensors","pull_count":700}]}`, srv.URL)
 		case r.URL.Path == "/v2/repositories/ai/":
 			fmt.Fprint(w, `{"next":null,"results":[{"name":"qwen3","pull_count":800},{"name":"smollm2","pull_count":10,"description":"small qwen-like"}]}`)
 		case r.URL.Path == "/v2/repositories/ai/qwen3/tags":
@@ -58,8 +58,8 @@ func TestReposPagesFiltersAndCaches(t *testing.T) {
 	}
 	all := New(Options{BaseURL: srv.URL, AllTags: true})
 	repos, _ = all.Repos(context.Background())
-	if len(repos) != 4 {
-		t.Fatalf("AllTags should keep vllm repos, got %d", len(repos))
+	if len(repos) != 5 {
+		t.Fatalf("AllTags should keep vllm and safetensors repos, got %d", len(repos))
 	}
 }
 
