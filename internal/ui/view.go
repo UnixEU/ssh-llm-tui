@@ -47,6 +47,8 @@ func (m *Model) View() string {
 		body = m.viewCtxPanel()
 	case screenFiles:
 		body = m.viewFiles(bodyH)
+	case screenHub:
+		body = m.viewHub(bodyH)
 	default:
 		body = "ssh-llm-tui"
 	}
@@ -112,6 +114,9 @@ func (m *Model) viewModels() string {
 	hintText := m.cfg.Models.Hint
 	if m.status != "" && !m.fetching {
 		hintText = m.status
+	}
+	if n := m.activePulls(); n > 0 {
+		hintText = strings.TrimSpace(hintText + " " + plural(n, "download", "downloads") + " running, p shows progress.")
 	}
 	hint := ""
 	if strings.TrimSpace(hintText) != "" {
@@ -302,6 +307,12 @@ func (m *Model) helpLabels(short bool) []string {
 		}
 		return []string{"any key continue", "ctrl+q exit"}
 	case screenModels:
+		if m.hubReady() {
+			if short {
+				return []string{"enter", "r", "p", "ctrl+q"}
+			}
+			return []string{"enter select", "r refresh", "p pull from Docker Hub", "ctrl+q exit"}
+		}
 		if short {
 			return []string{"enter", "r", "ctrl+q"}
 		}
@@ -319,6 +330,8 @@ func (m *Model) helpLabels(short bool) []string {
 		return m.ctxHelp(short)
 	case screenFiles:
 		return m.filesHelp(short)
+	case screenHub:
+		return m.hubHelp(short)
 	default:
 		if short {
 			out := []string{"enter", "ctrl+t", "ctrl+r", "ctrl+n", "ctrl+o", "ctrl+x", "ctrl+f"}

@@ -67,7 +67,35 @@ type Config struct {
 	Downloads Downloads `yaml:"downloads"`
 	GPU       GPU       `yaml:"gpu"`
 	Fit       Fit       `yaml:"fit"`
+	Hub       Hub       `yaml:"hub"`
 }
+
+// Hub is the Docker Hub model search and the background pulls.
+type Hub struct {
+	// Pull is on or off: p on the model list searches the Hub and pulls
+	// models into DMR. Open to every user.
+	Pull string `yaml:"pull"`
+	// URL is the Hub API origin.
+	URL string `yaml:"url"`
+	// Namespace is the Hub namespace searched, "ai" by default.
+	Namespace string `yaml:"namespace"`
+	// CacheTTL keeps Hub listings this long; the Hub rate-limits anonymous
+	// clients.
+	CacheTTL Duration `yaml:"cache_ttl"`
+	// AllTags is on or off: off hides repos and tags the llama.cpp
+	// backend cannot run (vLLM, MLX, safetensors).
+	AllTags string `yaml:"all_tags"`
+	// Concurrency is how many pulls run at once (1-2; DMR runs at most 2).
+	Concurrency int `yaml:"pull_concurrency"`
+	// MinFree is kept free on the model disk after all queued pulls.
+	MinFree int64 `yaml:"pull_min_free"`
+	// ModelsDir is where the free space is read; defaults to
+	// MODEL_STORE_PATH.
+	ModelsDir string `yaml:"models_dir"`
+}
+
+// PullOn reports whether the Hub search and pulls are enabled.
+func (c Config) PullOn() bool { return c.Hub.Pull != "off" }
 
 // Fit controls the memory check before a model loads, and the context and
 // placement pickers.
@@ -440,6 +468,7 @@ func (c *Config) normalize() {
 		c.GPU.Mode = "auto"
 	}
 	c.GPU.SysStats = onOff(c.GPU.SysStats)
+	c.normalizeHub()
 	if c.GPU.Interval <= 0 {
 		c.GPU.Interval = Duration(2 * time.Second)
 	}
@@ -507,6 +536,44 @@ func (c *Config) normalizeFit() {
 	if strings.TrimSpace(f.Contexts) == "" {
 		f.Contexts = "8k,16k,32k,64k,128k"
 	}
+}
+
+func (c *Config) normalizeHub() {
+	h := &c.Hub
+	h.Pull = onOff(h.Pull)
+	h.URL = strings.TrimRight(strings.TrimSpace(h.URL), "/")
+	if h.URL == "" {
+		h.URL = "https://hub.docker.com"
+	}
+	h.Namespace = strings.Trim(strings.TrimSpace(h.Namespace), "/")
+	if h.Namespace == "" {
+		h.Namespace = "ai"
+	}
+	if h.CacheTTL <= 0 {
+		h.CacheTTL = Duration(30 * time.Minute)
+	}
+	if strings.TrimSpace(h.AllTags) == "" {
+		h.AllTags = "off"
+	}
+	h.AllTags = onOff(h.AllTags)
+	if h.Concurrency <= 0 {
+		h.Concurrency = 1
+	}
+	if h.Concurrency > 2 {
+		h.Concurrency = 2
+	}
+	if h.MinFree < 0 {
+		h.MinFree = 0
+	}
+	h.ModelsDir = strings.TrimSpace(h.ModelsDir)
+}
+
+// ModelsDir is the directory whose filesystem receives pulled models.
+func (c Config) ModelsDir() string {
+	if c.Hub.ModelsDir != "" {
+		return c.Hub.ModelsDir
+	}
+	return c.Fit.ModelStorePath
 }
 
 func (c *Config) normalizeEdit() {
@@ -794,6 +861,28 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 	set("ALLOW_CPU", &c.Fit.AllowCPU)
 	set("MODEL_STORE_PATH", &c.Fit.ModelStorePath)
 	set("KV_CACHE_TYPE", &c.Fit.KVCacheType)
+	set("MODEL_PULL", &c.Hub.Pull)
+	set("HUB_URL", &c.Hub.URL)
+	set("HUB_NAMESPACE", &c.Hub.Namespace)
+	set("HUB_ALL_TAGS", &c.Hub.AllTags)
+	set("MODEL_PULL_DIR", &c.Hub.ModelsDir)
+	if err := applyDurationEnv(getenv, "HUB_CACHE_TTL", &c.Hub.CacheTTL); err != nil {
+		return err
+	}
+	if v, ok := lookup(getenv, "MODEL_PULL_CONCURRENCY"); ok {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 2 {
+			return fmt.Errorf("MODEL_PULL_CONCURRENCY must be 1 or 2")
+		}
+		c.Hub.Concurrency = n
+	}
+	if v, ok := lookup(getenv, "MODEL_PULL_MIN_FREE"); ok {
+		n, err := ParseBytes(v)
+		if err != nil || n < 0 {
+			return fmt.Errorf("MODEL_PULL_MIN_FREE: a size such as 5G or 0")
+		}
+		c.Hub.MinFree = n
+	}
 	set("FIT_USAGE_PATH", &c.Fit.UsagePath)
 	if v, ok := lookup(getenv, "FIT_MARGIN_MIB"); ok {
 		n, err := strconv.ParseInt(v, 10, 64)

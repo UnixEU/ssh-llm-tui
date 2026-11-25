@@ -92,6 +92,7 @@ A help bar sits on the last row of every screen. It wraps or shortens on a narro
 | `s` / `p` / `u` / `m` | memory check | use the largest context that fits / run on CPU / unload idle models and check again / back to the model list |
 | `ctrl+o` | chat | change context size or GPU/CPU for the current model |
 | `r` | model list | refresh |
+| `p` | model list | search Docker Hub and pull a model in the background. See Docker Hub models |
 | `ctrl+t` | chat | expand or collapse the latest reasoning block |
 | `ctrl+r` | chat | switch assistant replies between rendered Markdown and raw text |
 | `ctrl+n` | chat | unload runners and pick another model, even if other sessions are connected |
@@ -175,6 +176,13 @@ Settings ending in `_BYTES` accept plain bytes (`10485760`) or a size with a bin
 | `KV_CACHE_TYPE` | empty (f16) | optional llama.cpp KV cache type, e.g. `q8_0`, sent as `--cache-type-k/v` |
 | `CPU_THREADS` | `0` | llama.cpp threads for the CPU target. `0` keeps the default |
 | `FIT_USAGE_PATH` | `/data/fit/usage.json` | measured GPU usage per model, context and target. `off` keeps it in memory |
+| `MODEL_PULL` | `on` | `p` on the model list: Docker Hub search and background pulls, for every user. `off` hides it |
+| `HUB_URL`, `HUB_NAMESPACE` | `https://hub.docker.com`, `ai` | Hub API and the namespace searched |
+| `HUB_CACHE_TTL` | `30m` | how long Hub listings are cached (anonymous clients are rate-limited) |
+| `HUB_ALL_TAGS` | `off` | `on` also lists vLLM repos and MLX/safetensors tags, which the llama.cpp backend cannot run |
+| `MODEL_PULL_CONCURRENCY` | `1` | pulls running at once, `1` or `2` (DMR runs at most two). The rest wait in the queue |
+| `MODEL_PULL_MIN_FREE` | `2G` | space kept free on the model disk after the download and all queued ones |
+| `MODEL_PULL_DIR` | `MODEL_STORE_PATH` | where the model disk's free space is read |
 
 With `FIT_CHECK=off`, `CONTEXT_SELECT=off`, `TARGET_SELECT=off` and no `KV_CACHE_TYPE`, model selection works as in 1.0.x: warm only, no configuration call.
 
@@ -386,6 +394,31 @@ The chat title shows how much of the model's context the conversation uses: `ai/
 
 Included files are sent with every message and are not compressed. Exclude files with `ctrl+f` to free context. When the backend refuses a request that no longer fits (llama.cpp `exceed_context_size_error`), the chat says so and points to `ctrl+x` and `ctrl+o`.
 
+## Docker Hub models
+
+`p` on the model list opens the Docker Hub screen. Type to search the `ai/` namespace (name and description, most pulled first), enter moves to the results, enter on a repository lists its tags with their download size; tags already pulled are marked `✓ pulled`. Only GGUF builds are listed unless `HUB_ALL_TAGS=on`.
+
+Enter on a tag opens the space check before anything is downloaded:
+
+```text
+Pull ai/qwen3:8b-q8_0
+
+  Download size        8.1 GiB
+  Queued pulls         4.7 GiB
+  Kept free            2 GiB
+  Needed               14.8 GiB
+  Free on model disk   50 GiB
+
+Enough space.
+y queues the pull · n cancels
+```
+
+The size is the tag's size on the Hub. Free space is read from the filesystem behind `MODEL_STORE_PATH` (the read-only mount of DMR's model store, so the disk where the model ends up). When the download, what queued pulls still need and `MODEL_PULL_MIN_FREE` do not fit, the pull is refused with the shortfall. Without `MODEL_STORE_PATH` the free space is unknown; the screen says so and `y` pulls anyway.
+
+`y` queues the pull. It runs in the background through DMR's `POST /models/create`, keeps going when you leave the screen or disconnect, and the queue is shared: everyone sees all pulls with a progress bar, size, speed and who started them. `tab` reaches the downloads; `c` cancels your own pull. The model list shows how many pulls are running; refresh it with `r` once one is done. Pulls are open to every user who can log in. Set `MODEL_PULL=off` to hide them.
+
+The container needs outbound HTTPS to `hub.docker.com` for the search. DMR downloads the model itself.
+
 ## Markdown
 
 Finished assistant replies are rendered as Markdown (headings, emphasis, lists, tables, links, and highlighted code) with a fixed dark style, wrapped to the chat width. The renderer does not query the terminal background, so it is safe over SSH. `MARKDOWN=off` leaves replies as plain text. `ctrl+r` switches the session. A reply that is still streaming stays plain text, then renders once it finishes. User messages and the collapsed thinking block stay plain. A wide table is wrapped, and any line that is still wider than the viewport is clipped.
@@ -479,7 +512,8 @@ A model list entry looks like `docker.io/ai/gpt-oss:20b` with an empty `dmr` obj
 
 - `AUTH_MODE=open` belongs on a trusted LAN. Do not publish port 2222 on the public internet in open mode. Use `AUTH_MODE=keys` beyond that LAN.
 - No Docker socket, no `docker` CLI, and no shell in the session. Context size and GPU/CPU placement use DMR's HTTP API, whose runtime flags DMR checks against its own allowlist.
-- The optional model store mount is read-only. The app only reads GGUF headers and the store index from it.
+- The optional model store mount is read-only. The app only reads GGUF headers and the store index from it, and its free space for the pull check.
+- Model pulls (`p`, on by default for every user) go through DMR's HTTP API, not the Docker socket. The Hub is read anonymously over HTTPS. Anyone who can log in can fill the model disk up to `MODEL_PULL_MIN_FREE`; set `MODEL_PULL=off` where that is not wanted.
 - Chat text is sent only to DMR. The server log records connections and model ids, not message bodies.
 - The image runs as non-root (uid 65532), read-only, with all capabilities dropped and `no-new-privileges`.
 - Do not commit host keys or `authorized_keys`.

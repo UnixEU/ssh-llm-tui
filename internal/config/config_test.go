@@ -383,3 +383,42 @@ func TestEditAndDownloadDefaultsAndEnv(t *testing.T) {
 		}
 	}
 }
+
+func TestHubDefaultsAndEnv(t *testing.T) {
+	cfg, err := Load(LoadOptions{Getenv: envFrom(map[string]string{"MODEL_STORE_PATH": "/dmr-models"})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := cfg.Hub
+	if !cfg.PullOn() || h.URL != "https://hub.docker.com" || h.Namespace != "ai" || h.CacheTTL.Duration() != 30*time.Minute ||
+		h.AllTags != "off" || h.Concurrency != 1 || h.MinFree != 2<<30 || cfg.ModelsDir() != "/dmr-models" {
+		t.Fatalf("defaults %+v dir %q", h, cfg.ModelsDir())
+	}
+	cfg, err = Load(LoadOptions{Getenv: envFrom(map[string]string{
+		"MODEL_PULL":             "off",
+		"HUB_URL":                "https://hub.example.test/",
+		"HUB_NAMESPACE":          "/models/",
+		"HUB_CACHE_TTL":          "5m",
+		"HUB_ALL_TAGS":           "on",
+		"MODEL_PULL_CONCURRENCY": "2",
+		"MODEL_PULL_MIN_FREE":    "0",
+		"MODEL_PULL_DIR":         "/models",
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h = cfg.Hub
+	if cfg.PullOn() || h.URL != "https://hub.example.test" || h.Namespace != "models" || h.CacheTTL.Duration() != 5*time.Minute ||
+		h.AllTags != "on" || h.Concurrency != 2 || h.MinFree != 0 || cfg.ModelsDir() != "/models" {
+		t.Fatalf("env %+v", h)
+	}
+	for _, bad := range []map[string]string{
+		{"MODEL_PULL_CONCURRENCY": "3"},
+		{"MODEL_PULL_MIN_FREE": "lots"},
+		{"HUB_CACHE_TTL": "soon"},
+	} {
+		if _, err := Load(LoadOptions{Getenv: envFrom(bad)}); err == nil {
+			t.Fatalf("%v should be rejected", bad)
+		}
+	}
+}

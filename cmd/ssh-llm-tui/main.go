@@ -19,7 +19,9 @@ import (
 	"github.com/UnixEU/ssh-llm-tui/internal/fit"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpu"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpuinfo"
+	"github.com/UnixEU/ssh-llm-tui/internal/hub"
 	"github.com/UnixEU/ssh-llm-tui/internal/modelstore"
+	"github.com/UnixEU/ssh-llm-tui/internal/pull"
 	"github.com/UnixEU/ssh-llm-tui/internal/session"
 	"github.com/UnixEU/ssh-llm-tui/internal/sshserver"
 	"github.com/UnixEU/ssh-llm-tui/internal/sysmem"
@@ -98,6 +100,27 @@ func run() error {
 		go sys.Start(ctx)
 	}
 	resolver, learned := setupFit(logger, cfg)
+	var hubClient *hub.Client
+	var pulls *pull.Manager
+	if cfg.PullOn() {
+		hubClient = hub.New(hub.Options{
+			BaseURL:   cfg.Hub.URL,
+			Namespace: cfg.Hub.Namespace,
+			TTL:       cfg.Hub.CacheTTL.Duration(),
+			AllTags:   cfg.Hub.AllTags == "on",
+		})
+		pulls = pull.New(ctx, client, cfg.Hub.Concurrency)
+		pulls.OnFinish(func(j pull.Job) {
+			if j.Err != "" {
+				logger.Printf("pull %s by %s: %s: %s", j.Ref, j.User, j.State, j.Err)
+				return
+			}
+			logger.Printf("pull %s by %s: %s", j.Ref, j.User, j.State)
+		})
+		if cfg.ModelsDir() == "" {
+			logger.Printf("MODEL_STORE_PATH is not set; model pulls cannot check free space on the model disk")
+		}
+	}
 	srv, err := sshserver.NewWith(cfg.Server, func(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 		model := ui.New(ui.Options{
 			Config:    cfg,
@@ -113,6 +136,8 @@ func run() error {
 			Resolver:  resolver,
 			Learned:   learned,
 			ReadRAM:   sysmem.Read,
+			Hub:       hubClient,
+			Pulls:     pulls,
 			Renderer:  bubbletea.MakeRenderer(sess),
 			User:      sess.User(),
 			Version:   version,

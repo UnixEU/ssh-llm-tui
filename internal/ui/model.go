@@ -7,12 +7,15 @@ import (
 	"time"
 
 	"github.com/UnixEU/ssh-llm-tui/internal/config"
+	"github.com/UnixEU/ssh-llm-tui/internal/diskspace"
 	"github.com/UnixEU/ssh-llm-tui/internal/dmr"
 	"github.com/UnixEU/ssh-llm-tui/internal/downloads"
 	"github.com/UnixEU/ssh-llm-tui/internal/edits"
 	"github.com/UnixEU/ssh-llm-tui/internal/fit"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpu"
 	"github.com/UnixEU/ssh-llm-tui/internal/gpuinfo"
+	"github.com/UnixEU/ssh-llm-tui/internal/hub"
+	"github.com/UnixEU/ssh-llm-tui/internal/pull"
 	"github.com/UnixEU/ssh-llm-tui/internal/sysmem"
 	"github.com/UnixEU/ssh-llm-tui/internal/sysstat"
 	"github.com/UnixEU/ssh-llm-tui/internal/think"
@@ -39,6 +42,7 @@ const (
 	screenChanges
 	screenCtxInfo
 	screenFiles
+	screenHub
 )
 
 type loadKind int
@@ -95,6 +99,13 @@ type Options struct {
 	Learned *fit.Learned
 	// ReadRAM reads system memory for the CPU target.
 	ReadRAM func() (sysmem.Info, error)
+	// Hub searches Docker Hub and Pulls runs the shared download queue.
+	// Either nil hides the search.
+	Hub   *hub.Client
+	Pulls *pull.Manager
+	// DiskFree reads the model disk; defaults to the filesystem holding
+	// the configured models directory.
+	DiskFree func() (diskspace.Info, error)
 }
 
 // Model is the bubbletea application for one SSH session.
@@ -119,6 +130,10 @@ type Model struct {
 	resolver   *fit.Resolver
 	learned    *fit.Learned
 	readRAM    func() (sysmem.Info, error)
+	hubc       *hub.Client
+	pulls      *pull.Manager
+	diskFree   func() (diskspace.Info, error)
+	hub        *hubState
 	fit        *fitState
 	ctxSize    int
 	target     fit.Target
@@ -284,6 +299,9 @@ func New(opts Options) *Model {
 		resolver:  opts.Resolver,
 		learned:   opts.Learned,
 		readRAM:   opts.ReadRAM,
+		hubc:      opts.Hub,
+		pulls:     opts.Pulls,
+		diskFree:  opts.DiskFree,
 
 		baseBudget: opts.Budget,
 		markdown:   opts.Config.MarkdownOn(),
@@ -352,6 +370,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onCtxSize(msg)
 	case compressMsg:
 		return m.onCompress(msg)
+	case hubReposMsg:
+		return m.onHubRepos(msg)
+	case hubTagsMsg:
+		return m.onHubTags(msg)
+	case hubTickMsg:
+		return m.onHubTick()
 	default:
 		return m, nil
 	}
@@ -392,6 +416,8 @@ func (m *Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.onCtxPanelKey(msg)
 	case screenFiles:
 		return m.onFilesKey(msg)
+	case screenHub:
+		return m.onHubKey(msg)
 	default:
 		return m, nil
 	}
@@ -417,6 +443,10 @@ func (m *Model) onModelsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			break
 		}
 		return m, m.startFetch()
+	case "p":
+		if !filtering && m.hubReady() {
+			return m.openHub()
+		}
 	case "enter":
 		if m.fetching || len(m.models) == 0 {
 			return m, nil

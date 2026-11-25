@@ -32,6 +32,13 @@
 - The diff compares the uploaded original with the newest version, so it shows everything that changed, accepted or not. `b` diffs a pending proposal against the accepted version instead.
 - `d` (or `ctrl+r`) switches between the diff and the whole file with line numbers. `]`/`[` jump between hunks, tab or enter moves to the right pane to scroll.
 
+### Docker Hub models
+
+- `p` on the model list opens a Docker Hub screen: search the `ai/` namespace, list a repository's tags with their download size, and pull one into DMR. Pulled tags are marked. vLLM repos and MLX/safetensors tags are hidden (`HUB_ALL_TAGS=on` shows them).
+- Before a pull the screen shows the download size, what queued pulls still need, the reserve (`MODEL_PULL_MIN_FREE`, 2 GiB) and the free space on the model disk (the filesystem behind `MODEL_STORE_PATH`). A pull that does not fit is refused.
+- Pulls run in the background through `POST /models/create`, one at a time by default (`MODEL_PULL_CONCURRENCY`, up to 2), and keep going after the session ends. The queue is shared by all sessions with progress bars, speed and who started each pull; `c` cancels your own. Open to every user; `MODEL_PULL=off` hides it.
+- New settings: `MODEL_PULL`, `HUB_URL`, `HUB_NAMESPACE`, `HUB_CACHE_TTL`, `HUB_ALL_TAGS`, `MODEL_PULL_CONCURRENCY`, `MODEL_PULL_MIN_FREE`, `MODEL_PULL_DIR`.
+
 ## 1.3.1
 
 - The welcome banner is copied into the image at build time from `banner.txt`. It no longer depends on a host bind mount. Edit `banner.txt` and rebuild to customise it. `WELCOME_MESSAGE` is still the fallback when the file is missing, empty, or does not fit the terminal.
