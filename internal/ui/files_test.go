@@ -36,6 +36,9 @@ func TestFileBoxCollapsedAndSingleLine(t *testing.T) {
 	}
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
 	got := next.(*Model)
+	if got.screen != screenFiles {
+		t.Fatalf("ctrl+f should open the files screen, got %v", got.screen)
+	}
 	focused := got.View()
 	if lipgloss.Height(focused) != got.height {
 		t.Fatalf("focused height %d want %d\n%s", lipgloss.Height(focused), got.height, focused)
@@ -61,8 +64,8 @@ func TestFileBoxCollapsedAndSingleLine(t *testing.T) {
 	}
 	next, _ = got.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	left := next.(*Model)
-	if left.filesFocus || left.screen != screenChat {
-		t.Fatalf("esc should leave the file box, focus %v screen %v", left.filesFocus, left.screen)
+	if left.screen != screenChat {
+		t.Fatalf("esc should leave the files screen, screen %v", left.screen)
 	}
 }
 
@@ -151,7 +154,6 @@ func TestFileSummaryScroll(t *testing.T) {
 	m := testModel(t)
 	m.files = files
 	m.cfg.Uploads.FilesBoxRows = 3
-	m.filesFocus = true
 	m.ensureFileSel()
 	box := m.renderFileBox(true)
 	lines := strings.Split(box, "\n")

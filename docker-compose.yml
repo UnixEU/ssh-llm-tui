@@ -92,7 +92,6 @@ services:
       # PUBLIC_PORT: "2222"
       IMAGE_MAX_PX: "1536"
       IMAGE_MAX_BYTES: "2M"
-      FILES_BOX_ROWS: "4"
       # VISION_MODELS: "ai/*vl*"
       # NON_VISION_MODELS: "ai/gpt-oss*"
       # Banner is copied into the image at build time from banner.txt.

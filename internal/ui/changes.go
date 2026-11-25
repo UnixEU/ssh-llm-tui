@@ -105,7 +105,6 @@ func (m *Model) openChanges() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.screen = screenChanges
-	m.filesFocus = false
 	m.chDiff = false
 	m.chTop = 0
 	m.ensureChangeSel()

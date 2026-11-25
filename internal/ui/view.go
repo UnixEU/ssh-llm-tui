@@ -45,6 +45,8 @@ func (m *Model) View() string {
 		body = m.viewChanges(bodyH)
 	case screenCtxInfo:
 		body = m.viewCtxPanel()
+	case screenFiles:
+		body = m.viewFiles(bodyH)
 	default:
 		body = "ssh-llm-tui"
 	}
@@ -315,13 +317,9 @@ func (m *Model) helpLabels(short bool) []string {
 		return m.changesHelp(short)
 	case screenCtxInfo:
 		return m.ctxHelp(short)
+	case screenFiles:
+		return m.filesHelp(short)
 	default:
-		if m.filesFocus {
-			if short {
-				return []string{"space", "d", "D clear", "j/k", "esc", "ctrl+q"}
-			}
-			return []string{"space include (file/dir)", "d remove", "D clear all", "j/k pgup g/G", "esc/ctrl+f back", "ctrl+q exit"}
-		}
 		if short {
 			out := []string{"enter", "ctrl+t", "ctrl+r", "ctrl+n", "ctrl+o", "ctrl+x", "ctrl+f"}
 			if m.editsReady() {
@@ -456,12 +454,8 @@ func (m *Model) chatFileBox(maxH int) (string, int) {
 	if m.files == nil || maxH < 1 {
 		return "", 0
 	}
-	box := m.renderFileBox(m.filesFocus)
+	box := m.renderFileBox(false)
 	h := lineCount(box)
-	if h > maxH && m.filesFocus {
-		box = m.renderFileBox(false)
-		h = lineCount(box)
-	}
 	if h > maxH || h < 1 {
 		return "", 0
 	}

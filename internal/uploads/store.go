@@ -155,6 +155,13 @@ func (s *Store) SetMaxTotalBytes(n int64) {
 	}
 }
 
+// MaxTotalBytes is the per-user total limit.
+func (s *Store) MaxTotalBytes() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.maxTotal
+}
+
 // SetIgnore replaces the ignored component names. Paths with one of these
 // components are accepted from clients and dropped. nil disables it.
 func (s *Store) SetIgnore(names []string) {

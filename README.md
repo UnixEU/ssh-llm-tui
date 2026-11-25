@@ -95,7 +95,7 @@ A help bar sits on the last row of every screen. It wraps or shortens on a narro
 | `ctrl+t` | chat | expand or collapse the latest reasoning block |
 | `ctrl+r` | chat | switch assistant replies between rendered Markdown and raw text |
 | `ctrl+n` | chat | unload runners and pick another model, even if other sessions are connected |
-| `ctrl+f` | chat | focus the file box. `j`/`k` and pgup/pgdn scroll it, space includes, `d` deletes one, `D` clears all after y/n, `esc` leaves the box |
+| `ctrl+f` | chat | open the files screen: the upload tree and a preview. See Uploads |
 | `ctrl+x` | chat | context panel: size, tokens in use, last reply speed. `r` resets the history after y/n, `c` compresses it. See Context |
 | `ctrl+e` | chat | open the review screen for file changes the model proposed. See Edits and downloads |
 | `ctrl+c` | chat | cancel the reply in progress. It does not exit |
@@ -155,7 +155,7 @@ Settings ending in `_BYTES` accept plain bytes (`10485760`) or a size with a bin
 | `CONTEXT_TOKEN_BUDGET` | `8192` | rough byte/4 cap for included text. Once a context size is chosen, the cap is three quarters of it |
 | `IMAGE_MAX_PX` | `1536` | longest side after downscale |
 | `IMAGE_MAX_BYTES` | `2M` | encoded image payload cap |
-| `FILES_BOX_ROWS` | `4` | file rows when the box is focused |
+| `FILES_BOX_ROWS` | `4` | accepted and ignored since 1.4.0. The files screen uses the full height |
 | `VISION_MODELS` | empty | comma-separated globs that force an image attempt |
 | `NON_VISION_MODELS` | empty | comma-separated globs that skip images |
 | `GPU_STATS` | `auto` | `auto` or `off` |
@@ -260,7 +260,20 @@ Limits are per username: `UPLOAD_MAX_BYTES` per file (10 MiB), `UPLOAD_MAX_FILES
 
 FileZilla and WinSCP work over SFTP to port 2222. Plain text, Markdown, source, CSV, JSON, YAML, and logs are included as UTF-8. DOCX text is read from `word/document.xml`. PDF text is extracted with a pure-Go reader. A scanned PDF has no text layer, so the box shows that nothing could be extracted. There is no OCR.
 
-On the chat screen the file list is a full-width strip just above the input. Unfocused it is one line, `files: 7 (3 incl, ~2.1k/8.2kt, 2 img) — ctrl+f`: files, included files, the included token estimate against the context budget (`over` when it does not fit), and images. `ctrl+f` expands it to `FILES_BOX_ROWS` (default 4) single-line rows. Uploaded directories appear as tree rows (`folder/`, then its files indented) with `included/total` and the included tokens of everything below. A long name is cut with `…` and does not wrap. `j`/`k`, arrows, pgup and pgdn scroll the list, `g`/`G` (or home/end) jump to the top or bottom. `esc` or `ctrl+f` leaves the list. Space toggles include on a file, or on every file under the selected directory (all on, or all off when all were on). `d` removes the selected file or directory tree, `D` clears every file after a y/n confirm. The `scp` hint and the token gauge sit on the title line of the open box.
+On the chat screen one line above the input sums up the uploads: `files: 7 (3 incl, ~2.1k/8.2kt, 2 img) — ctrl+f`: files, included files, the included token estimate against the context budget (`over` when it does not fit), and images.
+
+`ctrl+f` opens the files screen. The header line shows the space used against `UPLOAD_MAX_TOTAL_BYTES`, the prompt gauge and the `scp` command. The left pane is the upload tree: directory rows (`folder/`, then its files indented) with `included/total` and the included tokens of everything below, file rows with size and tokens, `img` and the sent size for images, `!` for a file with a note and `●` for a file changed in the edits. The right pane previews the selected file with line numbers (the edited version when it was changed), an image's size, or a folder's totals. On a terminal narrower than 72 columns one pane is shown at a time.
+
+| Key | Action |
+| --- | --- |
+| `j`/`k`, arrows, pgup/pgdn, `g`/`G` | move in the list, or scroll the preview |
+| `tab`, enter, `l`/`h` | switch between the list and the preview |
+| space | include or exclude a file, or every file under a directory (all on, or all off when all were on) |
+| `a` / `n` | include / exclude every file |
+| `d` | remove the selected file or directory tree |
+| `D` | remove every file and the edits after a y/n confirm |
+| `e` | open the review screen (`ctrl+e`) at the selected file |
+| `esc`, `ctrl+f` | back to the chat |
 
 New uploads are included automatically until `UPLOAD_AUTO_INCLUDE` (default 20) files are included or the included text would pass `CONTEXT_TOKEN_BUDGET`. The first file is always included. After that, new files arrive excluded (`✗`), so a large tree does not flood the prompt; include the directories you need with space. Included files are sent in path order. When they do not all fit the budget, the first file that does not fit is cut, and the prompt ends with a note naming the files that were left out. The prompt lists included files by their relative path.
 

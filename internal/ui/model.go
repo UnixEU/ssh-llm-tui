@@ -38,6 +38,7 @@ const (
 	screenFit
 	screenChanges
 	screenCtxInfo
+	screenFiles
 )
 
 type loadKind int
@@ -143,10 +144,12 @@ type Model struct {
 	streaming     bool
 	markdown      bool
 	fetching      bool
-	filesFocus    bool
 	fileConfirm   bool
 	fileSel       string
 	fileTop       int
+	fileRight     bool
+	previewTop    int
+	paneRows      int
 	noVision      map[string]bool
 	skipImages    bool
 	imageRetried  bool
@@ -384,6 +387,8 @@ func (m *Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.onChangesKey(msg)
 	case screenCtxInfo:
 		return m.onCtxPanelKey(msg)
+	case screenFiles:
+		return m.onFilesKey(msg)
 	default:
 		return m, nil
 	}
@@ -426,11 +431,6 @@ func (m *Model) onModelsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) onChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		if m.filesFocus {
-			m.filesFocus = false
-			m.fileConfirm = false
-			return m, nil
-		}
 		return m.backToWelcome()
 	case "ctrl+n":
 		return m.changeModel()
@@ -452,87 +452,15 @@ func (m *Model) onChatKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.syncTranscript(m.viewport.AtBottom())
 		return m, nil
 	case "ctrl+f":
-		m.filesFocus = !m.filesFocus
-		m.fileConfirm = false
-		m.ensureFileSel()
-		return m, nil
-	case "D", "x":
-		if m.filesFocus && !m.fileConfirm {
-			m.fileConfirm = true
-			return m, nil
-		}
-		return m.passInput(msg)
-	case "y", "Y":
-		if m.filesFocus && m.fileConfirm {
-			if m.files != nil {
-				_ = m.files.Clear(m.user)
-			}
-			if m.edits != nil {
-				m.edits.Clear(m.user)
-			}
-			m.fileConfirm = false
-			m.fileSel = ""
-			return m, nil
-		}
-		return m.passInput(msg)
-	case "n", "N":
-		if m.filesFocus && m.fileConfirm {
-			m.fileConfirm = false
-			return m, nil
-		}
-		return m.passInput(msg)
-	case "up", "k":
-		if m.filesFocus {
-			m.moveFile(-1)
-			return m, nil
-		}
-		return m.passInput(msg)
-	case "down", "j":
-		if m.filesFocus {
-			m.moveFile(1)
-			return m, nil
-		}
-		return m.passInput(msg)
-	case " ":
-		if m.filesFocus {
-			m.toggleSelectedFile()
-			return m, nil
-		}
-		return m.passInput(msg)
-	case "d":
-		if m.filesFocus {
-			m.removeSelectedFile()
-			return m, nil
-		}
-		return m.passInput(msg)
-	case "home", "g":
-		if m.filesFocus {
-			m.jumpFile(-1)
-			return m, nil
-		}
-		return m.passInput(msg)
-	case "end", "G":
-		if m.filesFocus {
-			m.jumpFile(1)
-			return m, nil
-		}
-		return m.passInput(msg)
+		return m.openFiles()
 	case "pgup", "ctrl+u":
-		if m.filesFocus {
-			m.pageFiles(-1)
-			return m, nil
-		}
 		m.viewport.ScrollUp(scrollStep(m.viewport.Height))
 		return m, nil
 	case "pgdown", "ctrl+d":
-		if m.filesFocus {
-			m.pageFiles(1)
-			return m, nil
-		}
 		m.viewport.ScrollDown(scrollStep(m.viewport.Height))
 		return m, nil
 	case "enter":
-		if m.filesFocus || m.streaming {
+		if m.streaming {
 			return m, nil
 		}
 		return m.submit()
@@ -935,7 +863,6 @@ func (m *Model) backToWelcome() (tea.Model, tea.Cmd) {
 	if m.streaming {
 		m.finishStream(context.Canceled)
 	}
-	m.filesFocus = false
 	m.screen = screenLoading
 	m.loadKind = loadUnload
 	m.status = "Unloading models…"
@@ -957,7 +884,6 @@ func (m *Model) onHome(msg homeMsg) (tea.Model, tea.Cmd) {
 	m.turns = nil
 	m.resetLiveReply()
 	m.errText = ""
-	m.filesFocus = false
 	switch {
 	case msg.err != nil:
 		m.errText = oneLine(msg.err)
@@ -987,6 +913,9 @@ func (m *Model) revealFile(index, n int) {
 }
 
 func (m *Model) filesBoxRows() int {
+	if m.screen == screenFiles && m.paneRows > 0 {
+		return m.paneRows
+	}
 	n := m.cfg.Uploads.FilesBoxRows
 	if n < 1 {
 		return 4

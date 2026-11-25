@@ -20,6 +20,12 @@
 - A request that no longer fits the context gets a hint to compress, reset or pick a larger context.
 - New settings: `CONTEXT_USAGE`, `CONTEXT_WARN_PCT`, `COMPRESS_KEEP_TURNS`, `COMPRESS_PROMPT`.
 
+### Files screen
+
+- `ctrl+f` opens a full-screen files view instead of a few rows above the input. The left pane is the upload tree with sizes, tokens, include marks and edit marks; the right pane previews the selected file with line numbers (the edited version when it was changed), or an image's size, or a folder's totals. The header shows the space used against the per-user limit and the `scp` command.
+- Keys: space include, `a`/`n` include or exclude all, `d` remove, `D` clear all after y/n, `tab` or enter switches panes, `e` opens the review screen at the selected file, `esc` back. Narrow terminals show one pane at a time.
+- The chat keeps the one-line files summary. `FILES_BOX_ROWS` is ignored.
+
 ## 1.3.1
 
 - The welcome banner is copied into the image at build time from `banner.txt`. It no longer depends on a host bind mount. Edit `banner.txt` and rebuild to customise it. `WELCOME_MESSAGE` is still the fallback when the file is missing, empty, or does not fit the terminal.
