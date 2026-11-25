@@ -105,7 +105,7 @@ func (m *Model) openChanges() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.screen = screenChanges
-	m.chDiff = false
+	m.chFocus = false
 	m.chTop = 0
 	m.ensureChangeSel()
 	return m, nil
@@ -170,55 +170,95 @@ func (m *Model) moveChange(delta int) {
 func (m *Model) onChangesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	ws := m.workspace()
 	key := msg.String()
-	if m.chDiff {
-		switch key {
-		case "esc", "enter", "q":
-			m.chDiff = false
-			return m, nil
-		case "up", "k":
-			m.chTop--
-		case "down", "j":
-			m.chTop++
-		case "pgup", "ctrl+u":
-			m.chTop -= scrollStep(m.diffRows())
-		case "pgdown", "ctrl+d", " ":
-			m.chTop += scrollStep(m.diffRows())
-		case "home", "g":
-			m.chTop = 0
-		case "end", "G":
-			m.chTop = 1 << 30
-		case "n":
-			m.moveChange(1)
-		case "p":
-			m.moveChange(-1)
-		default:
-			return m.onChangesAction(ws, key)
-		}
-		if m.chTop < 0 {
-			m.chTop = 0
-		}
-		return m, nil
+	rows := m.paneRows
+	if rows < 3 {
+		rows = 3
 	}
 	switch key {
-	case "esc", "ctrl+e":
+	case "esc":
+		if m.chFocus {
+			m.chFocus = false
+			return m, nil
+		}
 		m.screen = screenChat
 		m.syncTranscript(true)
 		return m, nil
-	case "up", "k":
-		m.moveChange(-1)
-	case "down", "j":
-		m.moveChange(1)
-	case "home", "g":
-		m.moveChange(-1 << 30)
-	case "end", "G":
-		m.moveChange(1 << 30)
-	case "enter":
+	case "ctrl+e", "q":
+		m.chFocus = false
+		m.screen = screenChat
+		m.syncTranscript(true)
+		return m, nil
+	case "tab", "enter":
 		if m.chPath != "" {
-			m.chDiff = true
-			m.chTop = 0
+			m.chFocus = !m.chFocus
 		}
+		return m, nil
+	case "right", "l":
+		if m.chPath != "" {
+			m.chFocus = true
+		}
+		return m, nil
+	case "left", "h":
+		m.chFocus = false
+		return m, nil
+	case "d", "ctrl+r":
+		m.chFileView = !m.chFileView
+		m.chTop = 0
+		if m.chFileView {
+			m.chNote = "File view: the newest version with line numbers. d shows the diff."
+		} else {
+			m.chNote = "Diff view. d shows the whole file."
+		}
+		return m, nil
+	case "b":
+		m.chAgainstCurrent = !m.chAgainstCurrent
+		m.chTop = 0
+		if m.chAgainstCurrent {
+			m.chNote = "Diff against the accepted version: only what the pending proposal changes."
+		} else {
+			m.chNote = "Diff against the uploaded original."
+		}
+		return m, nil
+	case "]", "[":
+		m.jumpHunk(key == "]")
+		return m, nil
+	case "up", "k":
+		if m.chFocus {
+			m.chTop--
+		} else {
+			m.moveChange(-1)
+		}
+	case "down", "j":
+		if m.chFocus {
+			m.chTop++
+		} else {
+			m.moveChange(1)
+		}
+	case "pgup", "ctrl+u":
+		m.chTop -= scrollStep(rows)
+	case "pgdown", "ctrl+d", " ":
+		m.chTop += scrollStep(rows)
+	case "home", "g":
+		if m.chFocus {
+			m.chTop = 0
+		} else {
+			m.moveChange(-1 << 30)
+		}
+	case "end", "G":
+		if m.chFocus {
+			m.chTop = 1 << 30
+		} else {
+			m.moveChange(1 << 30)
+		}
+	case "n":
+		m.moveChange(1)
+	case "p":
+		m.moveChange(-1)
 	default:
 		return m.onChangesAction(ws, key)
+	}
+	if m.chTop < 0 {
+		m.chTop = 0
 	}
 	return m, nil
 }
@@ -450,14 +490,6 @@ func (m *Model) downloadCommands() []string {
 }
 
 // diffRows is how many diff lines fit on the review screen.
-func (m *Model) diffRows() int {
-	n := m.height - 12
-	if n < 3 {
-		n = 3
-	}
-	return n
-}
-
 func statusTag(e edits.Entry) string {
 	switch {
 	case e.Change.ID == 0 && e.Modified:
@@ -475,10 +507,6 @@ func (m *Model) viewChanges(bodyH int) string {
 	}
 	header := m.fitHeader("Changes", right, 2)
 	entries := m.changeEntries()
-	var lines []string
-	if len(entries) == 0 {
-		lines = append(lines, m.theme.muted.Render("No changes yet. Ask the model to change an uploaded file; its proposals appear here."))
-	}
 	pending, accepted := 0, 0
 	for _, e := range entries {
 		if e.Change.Status == edits.StatusPending {
@@ -488,54 +516,95 @@ func (m *Model) viewChanges(bodyH int) string {
 			accepted++
 		}
 	}
-	listRows := len(entries)
-	maxList := bodyH / 3
-	if !m.chDiff {
-		maxList = bodyH - 10
-	}
-	if maxList < 3 {
-		maxList = 3
-	}
-	if listRows > maxList {
-		listRows = maxList
-	}
-	sel := m.changeIndex(entries)
-	top := 0
-	if sel >= listRows {
-		top = sel - listRows + 1
-	}
-	for i := top; i < len(entries) && i < top+listRows; i++ {
-		lines = append(lines, m.changeRow(entries[i], i == sel))
-	}
-	if sel >= 0 {
-		if note := entries[sel].Change.Reason; note != "" && entries[sel].Change.Status != edits.StatusAccepted {
-			lines = append(lines, m.theme.fileNote.Render("! "+note))
-		}
-	}
 	summary := fmt.Sprintf("%d waiting · %d changed against the upload", pending, accepted)
 	if n := len(m.workspace().Failures()); n > 0 {
 		summary += fmt.Sprintf(" · %s failed (f sends them back)", plural(n, "block", "blocks"))
 	}
-	lines = append(lines, m.theme.muted.Render(summary))
+	mode := "diff"
+	if m.chFileView {
+		mode = "file"
+	}
+	summary += " · view: " + mode + " (d)"
+	summaryLine := m.clipWidth(m.theme.muted.Render(summary))
+	note := ""
 	if m.chNote != "" {
-		lines = append(lines, m.theme.status.Render(m.chNote))
+		note = m.clipWidth(m.theme.status.Render(m.chNote))
 	}
-	body := strings.Join(lines, "\n")
-	var tail []string
-	if m.chDiff && sel >= 0 {
-		tail = append(tail, m.diffView(entries[sel], bodyH-lineCount(header)-lineCount(body)-1)...)
+	dl := m.downloadBlock()
+	rows := bodyH - lineCount(header) - 2
+	if rows-lineCount(dl) >= 8 {
+		rows -= lineCount(dl)
 	} else {
-		tail = append(tail, "", m.theme.files.Render("Download (after x export, t whole folder)"))
-		for _, c := range m.downloadCommands() {
-			tail = append(tail, m.theme.text.Render("  "+c))
+		dl = ""
+	}
+	if rows < 1 {
+		rows = 1
+	}
+	m.paneRows = rows
+	leftW, rightW := paneWidths(m.width)
+	sel := m.changeIndex(entries)
+	var left []string
+	if len(entries) == 0 {
+		left = []string{
+			m.theme.muted.Render("No changes yet."),
+			"",
+			m.theme.muted.Render("With edit mode on (m), ask the model to"),
+			m.theme.muted.Render("change an uploaded file. Its proposals"),
+			m.theme.muted.Render("appear here: a accepts, r rejects, d"),
+			m.theme.muted.Render("switches between diff and file view."),
 		}
-		if m.root() != "" {
-			tail = append(tail, m.theme.muted.Render("  Run git apply inside "+m.root()+"/. Downloads are removed when your last session ends."))
-		} else {
-			tail = append(tail, m.theme.muted.Render("  Downloads are removed when your last session ends."))
+	} else {
+		listRows := rows
+		if sel >= 0 && entries[sel].Change.Reason != "" && entries[sel].Change.Status != edits.StatusAccepted && listRows > 3 {
+			listRows -= 2
+		}
+		keepVisible(&m.chListTop, sel, len(entries), listRows)
+		for i := m.chListTop; i < len(entries) && i < m.chListTop+listRows; i++ {
+			left = append(left, m.changeRow(entries[i], i == sel, leftW))
+		}
+		if listRows < rows {
+			for len(left) < listRows {
+				left = append(left, "")
+			}
+			left = append(left, "", m.theme.fileNote.Render("! "+entries[sel].Change.Reason))
 		}
 	}
-	return joinLines(header, body, strings.Join(tail, "\n"))
+	var detail []string
+	if sel >= 0 && (rightW > 0 || m.chFocus) {
+		w := rightW
+		if w <= 0 {
+			w = m.width
+		}
+		detail = m.changeDetail(entries[sel], w, rows)
+	}
+	var panes string
+	switch {
+	case rightW > 0:
+		panes = joinPanes(left, detail, leftW, rightW, rows)
+	case m.chFocus && detail != nil:
+		panes = joinPanes(detail, nil, m.width, 0, rows)
+	default:
+		panes = joinPanes(left, nil, m.width, 0, rows)
+	}
+	parts := []string{header, summaryLine, panes}
+	if dl != "" {
+		parts = append(parts, dl)
+	}
+	return joinLines(append(parts, note)...)
+}
+
+// downloadBlock is the scp/sftp commands for the exports.
+func (m *Model) downloadBlock() string {
+	lines := []string{m.theme.files.Render("Download (after x export, t whole folder)")}
+	for _, c := range m.downloadCommands() {
+		lines = append(lines, m.clipWidth(m.theme.text.Render("  "+c)))
+	}
+	if m.root() != "" {
+		lines = append(lines, m.clipWidth(m.theme.muted.Render("  Run git apply inside "+m.root()+"/. Downloads are removed when your last session ends.")))
+	} else {
+		lines = append(lines, m.clipWidth(m.theme.muted.Render("  Downloads are removed when your last session ends.")))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // root is the single uploaded top-level folder, if there is one.
@@ -546,7 +615,7 @@ func (m *Model) root() string {
 	return edits.RootDir(uploadedNames(m.files, m.user, m.workspace()))
 }
 
-func (m *Model) changeRow(e edits.Entry, selected bool) string {
+func (m *Model) changeRow(e edits.Entry, selected bool, width int) string {
 	cur := "  "
 	if selected {
 		cur = "› "
@@ -584,25 +653,40 @@ func (m *Model) changeRow(e edits.Entry, selected bool) string {
 	case edits.StatusRejected, edits.StatusSuperseded:
 		style = m.theme.muted
 	}
-	line := fitMiddle(max(1, m.width), cur+label+"  ", e.Path, "  "+stats)
-	return style.Render(line)
+	line := fitMiddle(max(1, width), cur+label+"  ", e.Path, "  "+stats)
+	if selected && m.chFocus {
+		style = style.Underline(true)
+	}
+	return style.Render(padTo(line, width))
 }
 
-// diffView renders the coloured diff of one file, scrolled to chTop.
-func (m *Model) diffView(e edits.Entry, rows int) []string {
-	if rows < 2 {
-		rows = 2
-	}
-	old, new, title, ok := m.workspace().Diff(e.Path)
+// changeTexts is what the detail pane compares for e: old and new text
+// and a title naming them.
+func (m *Model) changeTexts(e edits.Entry) (old, new, title string, ok bool) {
+	orig, newest, current, pending, ok := m.workspace().Compare(e.Path)
 	if !ok {
-		return nil
+		return "", "", "", false
 	}
+	switch {
+	case pending && m.chAgainstCurrent:
+		return current, newest, "accepted → proposed", true
+	case pending:
+		return orig, newest, "upload → proposed", true
+	default:
+		return orig, newest, "upload → accepted", true
+	}
+}
+
+// diffBody renders the coloured unified diff and the index of each hunk
+// header in the returned lines.
+func (m *Model) diffBody(old, new string) ([]string, []int) {
 	var body []string
+	var heads []int
 	for _, h := range edits.Hunks(old, new, 3) {
+		heads = append(heads, len(body))
 		body = append(body, m.theme.status.Render(h.Header()))
 		for _, l := range h.Lines {
 			l = strings.ReplaceAll(l, "\t", "    ")
-			l = m.clipWidth(l)
 			switch l[0] {
 			case '+':
 				body = append(body, m.theme.ok.Render(l))
@@ -616,30 +700,83 @@ func (m *Model) diffView(e edits.Entry, rows int) []string {
 	if len(body) == 0 {
 		body = append(body, m.theme.muted.Render("(no textual difference)"))
 	}
-	maxTop := len(body) - (rows - 1)
-	if maxTop < 0 {
-		maxTop = 0
+	return body, heads
+}
+
+// changeDetail is the right pane: a title and the diff or the file.
+func (m *Model) changeDetail(e edits.Entry, width, rows int) []string {
+	old, new, title, ok := m.changeTexts(e)
+	if !ok {
+		return nil
 	}
-	if m.chTop > maxTop {
-		m.chTop = maxTop
+	var body []string
+	if m.chFileView {
+		title = strings.TrimPrefix(title[strings.Index(title, "→")+len("→"):], " ") + " version"
+		if new == "" {
+			body = []string{m.theme.muted.Render("(the file is deleted in this version)")}
+		} else {
+			for _, l := range numbered(new) {
+				body = append(body, m.theme.text.Render(l))
+			}
+		}
+	} else {
+		added, removed := edits.Stats(old, new)
+		title += fmt.Sprintf(" · +%d -%d", added, removed)
+		body, _ = m.diffBody(old, new)
 	}
-	end := m.chTop + rows - 1
-	if end > len(body) {
-		end = len(body)
+	view := rows - 1
+	if view < 1 {
+		view = 1
 	}
-	head := m.theme.files.Render(fmt.Sprintf("%s · %s · lines %d-%d of %d", e.Path, title, m.chTop+1, end, len(body)))
-	return append([]string{head}, body[m.chTop:end]...)
+	shown := window(body, &m.chTop, view)
+	span := ""
+	if len(body) > view {
+		span = fmt.Sprintf("  %d-%d/%d", m.chTop+1, m.chTop+len(shown), len(body))
+	}
+	head := m.theme.files.Render(padTo(fitMiddle(width, "", e.Path+" · "+title, span), width))
+	return append([]string{head}, shown...)
+}
+
+// jumpHunk scrolls the diff to the next or previous hunk.
+func (m *Model) jumpHunk(next bool) {
+	if m.chFileView {
+		return
+	}
+	entries := m.changeEntries()
+	i := m.changeIndex(entries)
+	if i < 0 {
+		return
+	}
+	old, new, _, ok := m.changeTexts(entries[i])
+	if !ok {
+		return
+	}
+	_, heads := m.diffBody(old, new)
+	if next {
+		for _, h := range heads {
+			if h > m.chTop {
+				m.chTop = h
+				return
+			}
+		}
+		return
+	}
+	for j := len(heads) - 1; j >= 0; j-- {
+		if heads[j] < m.chTop {
+			m.chTop = heads[j]
+			return
+		}
+	}
+	m.chTop = 0
 }
 
 func (m *Model) changesHelp(short bool) []string {
-	if m.chDiff {
-		if short {
-			return []string{"a", "r", "n/p", "pgup", "esc", "ctrl+q"}
-		}
-		return []string{"a accept", "r reject", "n/p next/prev file", "j/k pgup/pgdn scroll", "esc list", "ctrl+q exit"}
-	}
 	if short {
-		return []string{"enter", "a/r", "A/R", "u", "v", "f", "x", "t", "m", "esc", "ctrl+q"}
+		return []string{"a/r", "A/R", "d diff/file", "tab", "]/[", "u", "v", "f", "x", "t", "m", "esc", "ctrl+q"}
 	}
-	return []string{"enter diff", "a/r accept/reject", "A/R all", "u undo", "v revert", "f send failures", "x export", "t whole folder .tar.gz", "m edit mode", "esc chat", "ctrl+q exit"}
+	view := "d file view"
+	if m.chFileView {
+		view = "d diff view"
+	}
+	return []string{"a/r accept/reject", "A/R all", view, "b diff base", "tab/enter scroll pane", "]/[ hunks", "u undo", "v revert", "f send failures", "x export", "t whole folder .tar.gz", "m edit mode", "esc chat", "ctrl+q exit"}
 }

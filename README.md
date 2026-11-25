@@ -97,7 +97,7 @@ A help bar sits on the last row of every screen. It wraps or shortens on a narro
 | `ctrl+n` | chat | unload runners and pick another model, even if other sessions are connected |
 | `ctrl+f` | chat | open the files screen: the upload tree and a preview. See Uploads |
 | `ctrl+x` | chat | context panel: size, tokens in use, last reply speed. `r` resets the history after y/n, `c` compresses it. See Context |
-| `ctrl+e` | chat | open the review screen for file changes the model proposed. See Edits and downloads |
+| `ctrl+e` | chat | open the review screen for file changes the model proposed: file list and diff side by side, `d` toggles diff and whole file. See Edits and downloads |
 | `ctrl+c` | chat | cancel the reply in progress. It does not exit |
 | `pgup` / `pgdn`, `ctrl+u` / `ctrl+d` | chat | scroll |
 | `ctrl+q` | every screen | unload if this is the last session, then close SSH |
@@ -316,12 +316,15 @@ FILE: old.txt
 - `DELETE` is refused unless `EDIT_ALLOW_DELETE=true`.
 - Blocks may sit inside code fences. Paths go through the same checks as uploads. Only text files are edited; images, PDF and DOCX are refused. A changed file must stay under `UPLOAD_MAX_BYTES`, and a reply may change at most `EDIT_MAX_FILES` files.
 
-After a reply, a note in the chat sums up the proposal, for example `Proposed changes to 2 files (1 new); 1 block could not be applied`. `ctrl+e` opens the review screen:
+After a reply, a note in the chat sums up the proposal, for example `Proposed changes to 2 files (1 new); 1 block could not be applied`. `ctrl+e` opens the review screen. The left pane lists the changed files; the right pane shows the coloured diff of the selected one, from the uploaded original to the newest version (the pending proposal, or the accepted version). The download commands are below. Narrow terminals show one pane at a time.
 
 | Key | Action |
 | --- | --- |
-| ↑/↓, `j`/`k`, `g`/`G` | select a file |
-| enter | show the coloured diff. `j`/`k`, pgup/pgdn scroll, `n`/`p` next and previous file, `esc` back to the list |
+| ↑/↓, `j`/`k`, `g`/`G`, `n`/`p` | select a file |
+| `d` (or `ctrl+r`) | switch the right pane between the diff and the whole file with line numbers, like `ctrl+r` switches raw and rendered replies in the chat |
+| `b` | for a pending change to a file that was already changed: diff against the accepted version instead of the upload, to see only what the new proposal changes |
+| tab, enter | move to the right pane and back. There `j`/`k` scroll; pgup/pgdn scroll in either pane |
+| `]` / `[` | next or previous hunk |
 | `a` / `r` | accept or reject the selected change |
 | `A` / `R` | accept or reject all pending changes |
 | `u` | undo the last accepted change of the file (it goes back to pending) |
@@ -330,7 +333,7 @@ After a reply, a note in the chat sums up the proposal, for example `Proposed ch
 | `x` | export the changed and new files plus `changes.patch` to `downloads/` |
 | `t` | export the whole uploaded folder with all accepted changes merged, as one `.tar.gz` |
 | `m` | turn edit mode off or on for this session |
-| `esc`, `ctrl+e` | back to the chat |
+| `esc`, `ctrl+e`, `q` | back to the chat (`esc` in the right pane goes back to the list first) |
 
 A newer proposal for a file replaces an older one that is still pending. Accepting a change that was built on an older version of the file is refused; ask again.
 

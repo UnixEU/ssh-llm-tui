@@ -562,6 +562,24 @@ func (w *Workspace) Diff(p string) (old, new string, title string, ok bool) {
 	return versionText(st.baseExists, st.base), versionText(st.cur.exists, st.cur.text), "accepted changes against the upload", true
 }
 
+// Compare returns the uploaded text of p and its newest version: the
+// result of a pending proposal, or else the accepted text. pending tells
+// which. current is the accepted text, the base of a pending proposal.
+func (w *Workspace) Compare(p string) (orig, newest, current string, pending, ok bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	st := w.files[p]
+	if st == nil {
+		return "", "", "", false, false
+	}
+	orig = versionText(st.baseExists, st.base)
+	current = versionText(st.cur.exists, st.cur.text)
+	if ch := st.change; ch != nil && ch.Status == StatusPending {
+		return orig, versionText(ch.AfterExists, ch.After), current, true, true
+	}
+	return orig, current, current, false, true
+}
+
 // Changed returns every file whose current version differs from the
 // upload, sorted by path.
 func (w *Workspace) Changed() []FileDiff {

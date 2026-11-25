@@ -26,6 +26,12 @@
 - Keys: space include, `a`/`n` include or exclude all, `d` remove, `D` clear all after y/n, `tab` or enter switches panes, `e` opens the review screen at the selected file, `esc` back. Narrow terminals show one pane at a time.
 - The chat keeps the one-line files summary. `FILES_BOX_ROWS` is ignored.
 
+### Review screen
+
+- `ctrl+e` uses the same two panes: changed files on the left, the diff of the selected file on the right, the download commands below.
+- The diff compares the uploaded original with the newest version, so it shows everything that changed, accepted or not. `b` diffs a pending proposal against the accepted version instead.
+- `d` (or `ctrl+r`) switches between the diff and the whole file with line numbers. `]`/`[` jump between hunks, tab or enter moves to the right pane to scroll.
+
 ## 1.3.1
 
 - The welcome banner is copied into the image at build time from `banner.txt`. It no longer depends on a host bind mount. Edit `banner.txt` and rebuild to customise it. `WELCOME_MESSAGE` is still the fallback when the file is missing, empty, or does not fit the terminal.

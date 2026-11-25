@@ -170,15 +170,18 @@ type Model struct {
 	ctxNote      string
 
 	// Edit review state.
-	editOn    bool
-	seen      map[string]bool
-	chPath    string
-	chDiff    bool
-	chTop     int
-	chNote    string
-	exporting bool
-	exported  bool
-	archive   string
+	editOn           bool
+	seen             map[string]bool
+	chPath           string
+	chFocus          bool
+	chFileView       bool
+	chAgainstCurrent bool
+	chTop            int
+	chListTop        int
+	chNote           string
+	exporting        bool
+	exported         bool
+	archive          string
 
 	gen    int
 	cancel context.CancelFunc
