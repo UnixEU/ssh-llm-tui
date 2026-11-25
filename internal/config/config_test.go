@@ -44,7 +44,7 @@ func TestLoadBakedInDefaults(t *testing.T) {
 	if !strings.Contains(cfg.Loading.Message, "{model}") {
 		t.Fatalf("loading message = %q", cfg.Loading.Message)
 	}
-	if cfg.Uploads.MaxBytes != 10<<20 || cfg.Uploads.MaxFiles != 1000 || cfg.Uploads.MaxTotalBytes != 200<<20 || cfg.Uploads.AutoInclude != 20 || cfg.Uploads.Ignore != DefaultUploadIgnore || cfg.Uploads.TokenBudget != 8192 {
+	if cfg.Uploads.MaxBytes != 10<<20 || cfg.Uploads.MaxFiles != 1000 || cfg.Uploads.MaxTotalBytes != 256<<20 || cfg.Uploads.AutoInclude != 20 || cfg.Uploads.Ignore != DefaultUploadIgnore || cfg.Uploads.TokenBudget != 8192 {
 		t.Fatalf("uploads %+v", cfg.Uploads)
 	}
 	if cfg.Uploads.ImageMaxPx != 1536 || cfg.Uploads.ImageMaxBytes != 2<<20 || cfg.Uploads.FilesBoxRows != 4 {
@@ -347,7 +347,7 @@ func TestEditAndDownloadDefaultsAndEnv(t *testing.T) {
 	if !cfg.EditOn() || !cfg.EditAllowNew() || cfg.EditAllowDelete() || cfg.Edit.MaxFiles != 20 || cfg.Edit.Protocol != "blocks" {
 		t.Fatalf("edit defaults %+v", cfg.Edit)
 	}
-	if cfg.Downloads.Dir != "/downloads" || cfg.Downloads.MaxTotalBytes != 200<<20 || cfg.Downloads.Archive != "tar.gz" || cfg.PublicPort() != 2222 || cfg.Downloads.PublicHost != "" {
+	if cfg.Downloads.Dir != "/downloads" || cfg.Downloads.MaxTotalBytes != 256<<20 || cfg.Downloads.Archive != "tar.gz" || cfg.PublicPort() != 2222 || cfg.Downloads.PublicHost != "" {
 		t.Fatalf("download defaults %+v", cfg.Downloads)
 	}
 	cfg, err = Load(LoadOptions{Getenv: envFrom(map[string]string{

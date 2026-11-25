@@ -2,7 +2,7 @@
 
 SSH terminal chat for local models served by [Docker Model Runner](https://docs.docker.com/ai/model-runner/) (DMR). Connect with `ssh -p 2222 user@host` and you get this app instead of a shell.
 
-Version 1.3.1. The interface is a terminal UI, built with Go and the Charm stack (Wish, Bubble Tea, Lip Gloss, Bubbles). Released under the MIT license. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
+Version 1.4.0. The interface is a terminal UI, built with Go and the Charm stack (Wish, Bubble Tea, Lip Gloss, Bubbles). Released under the MIT license. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
 
 The container talks to DMR only over HTTP. It does not mount the Docker socket and it does not call the `docker` CLI, so it cannot pull models or start containers.
 
@@ -109,6 +109,8 @@ The window can be resized. Finished assistant replies are rendered again at the 
 
 `config.example.yaml` is the baked-in default and the file compose mounts at `/config/config.yaml`. Environment variables override the file. An empty variable does not override.
 
+Settings ending in `_BYTES` accept plain bytes (`10485760`) or a size with a binary unit: `512k`, `256M`, `256MiB`, `256MB`, `1G`, `1.5G`. `k`, `M`, `G` and `T` are powers of 1024, with or without `B` / `iB`, the same way Docker reads a tmpfs size.
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SSH_HOST` | `0.0.0.0` | listen address |
@@ -130,9 +132,9 @@ The window can be resized. Finished assistant replies are rendered again at the 
 | `MARKDOWN` | `on` | `on` renders finished assistant replies. `off` leaves them plain. `ctrl+r` toggles the session |
 | `FOOTER_CHANGE`, `FOOTER_EXIT`, `FOOTER_SCROLL` | see YAML | accepted and ignored. The help bar is drawn by the app |
 | `UPLOAD_DIR` | `/uploads` | on-disk root. Files live in `/uploads/<user>/<relative path>` |
-| `UPLOAD_MAX_BYTES` | `10485760` | per file (10 MiB) |
+| `UPLOAD_MAX_BYTES` | `10M` | per file (10 MiB) |
 | `UPLOAD_MAX_FILES` | `1000` | files per username. Directories are capped at the same number |
-| `UPLOAD_MAX_TOTAL_BYTES` | `209715200` | total size of all files per username (200 MiB) |
+| `UPLOAD_MAX_TOTAL_BYTES` | `256M` | total size of all files per username (256 MiB) |
 | `UPLOAD_IGNORE` | `.git,node_modules,.venv,__pycache__,.DS_Store` | comma-separated path component names. Anything at or under such a component is accepted and discarded. `none` turns it off |
 | `UPLOAD_AUTO_INCLUDE` | `20` | how many new files are included in the prompt automatically, within `CONTEXT_TOKEN_BUDGET` |
 | `EDIT_MODE` | `on` | `on`: while files are uploaded, the model is told how to propose changes and replies are scanned for them. `m` on the review screen toggles it per session. `off` turns the feature off |
@@ -141,13 +143,13 @@ The window can be resized. Finished assistant replies are rendered again at the 
 | `EDIT_ALLOW_NEW` | `true` | the model may create new files |
 | `EDIT_ALLOW_DELETE` | `false` | the model may propose deleting files |
 | `DOWNLOAD_DIR` | `/downloads` | on-disk root for exports, `/downloads/<user>/` |
-| `DOWNLOAD_MAX_TOTAL_BYTES` | `209715200` | total size of one user's downloads (200 MiB) |
+| `DOWNLOAD_MAX_TOTAL_BYTES` | `256M` | total size of one user's downloads (256 MiB) |
 | `DOWNLOAD_ARCHIVE` | `tar.gz` | archive format of `t`. Only `tar.gz` |
 | `PUBLIC_HOST` | empty | host name clients use to reach the server. Only used to print exact download commands; `host` when empty |
 | `PUBLIC_PORT` | `SSH_PORT` | port clients use, for the same commands |
 | `CONTEXT_TOKEN_BUDGET` | `8192` | rough byte/4 cap for included text. Once a context size is chosen, the cap is three quarters of it |
 | `IMAGE_MAX_PX` | `1536` | longest side after downscale |
-| `IMAGE_MAX_BYTES` | `2097152` | encoded image payload cap |
+| `IMAGE_MAX_BYTES` | `2M` | encoded image payload cap |
 | `FILES_BOX_ROWS` | `4` | file rows when the box is focused |
 | `VISION_MODELS` | empty | comma-separated globs that force an image attempt |
 | `NON_VISION_MODELS` | empty | comma-separated globs that skip images |
@@ -171,6 +173,29 @@ The window can be resized. Finished assistant replies are rendered again at the 
 With `FIT_CHECK=off`, `CONTEXT_SELECT=off`, `TARGET_SELECT=off` and no `KV_CACHE_TYPE`, model selection works as in 1.0.x: warm only, no configuration call.
 
 Warm, chat, and unload calls send the full model id from `GET /engines/v1/models`. The screen shows the name without a `docker.io/` prefix.
+
+### Upload and download space
+
+`/uploads` and `/downloads` are tmpfs mounts. A tmpfs lives in the host's RAM and only uses memory for what is stored, so an empty mount costs nothing. Both mounts are shared by all users; the `*_MAX_TOTAL_BYTES` limits apply per user inside them.
+
+Sizes come from a `.env` file next to `docker-compose.yml`, which compose reads automatically. Copy `.env.example` to `.env` and adjust:
+
+```bash
+cp .env.example .env
+# UPLOADS_TMPFS_SIZE=1g
+# UPLOAD_MAX_TOTAL_BYTES=512M
+docker compose up -d
+```
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `UPLOADS_TMPFS_SIZE` | `256m` | size of the `/uploads` tmpfs (compose only) |
+| `DOWNLOADS_TMPFS_SIZE` | `256m` | size of the `/downloads` tmpfs (compose only) |
+| `UPLOAD_MAX_TOTAL_BYTES` | `256M` | per-user upload total |
+| `DOWNLOAD_MAX_TOTAL_BYTES` | `256M` | per-user export total |
+| `UPLOAD_MAX_BYTES` | `10M` | largest single file |
+
+Size the tmpfs for the users who upload at the same time: two users at the full 256 MiB need a 512 MiB mount. At start the server logs a warning when a per-user limit is larger than the mount that holds it, for example `UPLOAD_MAX_TOTAL_BYTES is 1 GiB, but /uploads holds only 256 MiB`. Without compose, mount any directory and set the limits as usual.
 
 ### DMR base URL
 
@@ -225,7 +250,7 @@ Each path component is checked: `..`, absolute paths, empty components and contr
 
 Uploading a whole Git checkout is the intended use. Components listed in `UPLOAD_IGNORE` (default `.git`, `node_modules`, `.venv`, `__pycache__`, `.DS_Store`) are accepted, so `scp -r` does not stop, but their data is dropped and does not count toward the limits. The server logs one INFO line per ignored directory.
 
-Limits are per username: `UPLOAD_MAX_BYTES` per file (10 MiB), `UPLOAD_MAX_FILES` files (1000) and `UPLOAD_MAX_TOTAL_BYTES` in total (200 MiB). A file over a limit is refused on its own and logged at WARN with the name of the variable, for example `limit of 1000 files per user reached (UPLOAD_MAX_FILES)`. Files already stored stay as they are and a refused file never lands half written. In SFTP mode `scp` reports the failed file and goes on with the rest. The legacy protocol (`scp -O`) has no per-file error, so it stops at the first refused file.
+Limits are per username: `UPLOAD_MAX_BYTES` per file (10 MiB), `UPLOAD_MAX_FILES` files (1000) and `UPLOAD_MAX_TOTAL_BYTES` in total (256 MiB). A file over a limit is refused on its own and logged at WARN with the name of the variable, for example `limit of 1000 files per user reached (UPLOAD_MAX_FILES)`. Files already stored stay as they are and a refused file never lands half written. In SFTP mode `scp` reports the failed file and goes on with the rest. The legacy protocol (`scp -O`) has no per-file error, so it stops at the first refused file.
 
 FileZilla and WinSCP work over SFTP to port 2222. Plain text, Markdown, source, CSV, JSON, YAML, and logs are included as UTF-8. DOCX text is read from `word/document.xml`. PDF text is extracted with a pure-Go reader. A scanned PDF has no text layer, so the box shows that nothing could be extracted. There is no OCR.
 
@@ -241,7 +266,7 @@ DMR's model list does not say whether a model can see images. This app still tri
 
 llama.cpp accepts images when that model was loaded with an mmproj (a vision projector). `docker model inspect <model>` is the check: look for an mmproj file, a vision projector, or a VL / vision tag. A text quant such as `ai/qwen3.8:27b-q4_K_M` needs that projector in the model card. `ai/gpt-oss:20b` is a text model. vLLM vision models use the same `/engines/v1` path when DMR routes them there.
 
-Bytes are stored under `UPLOAD_DIR` (default `/uploads/<user>/`), which compose mounts as a tmpfs (512 MiB, only what is stored uses RAM). The directory is emptied when the process starts and when that user's last TUI session ends. Open the TUI first, upload, and work with the files in that session.
+Bytes are stored under `UPLOAD_DIR` (default `/uploads/<user>/`), which compose mounts as a tmpfs of `UPLOADS_TMPFS_SIZE` (default 256 MiB). See [Upload and download space](#upload-and-download-space). The directory is emptied when the process starts and when that user's last TUI session ends. Open the TUI first, upload, and work with the files in that session.
 
 ## Edits and downloads
 
@@ -306,7 +331,7 @@ scp -P 2222 -O -r user@host:downloads .        # legacy scp protocol
 sftp -P 2222 user@host                          # then: get -r downloads
 ```
 
-Clients can read and delete in `downloads/`, but not write, create directories or rename. Downloads are wiped exactly like uploads: when the process starts and when that user's last TUI session ends, so download before you close the TUI. The edit workspace lives in memory and ends with it. `DOWNLOAD_MAX_TOTAL_BYTES` caps one user's exports; compose mounts `/downloads` as a 512 MiB tmpfs.
+Clients can read and delete in `downloads/`, but not write, create directories or rename. Downloads are wiped exactly like uploads: when the process starts and when that user's last TUI session ends, so download before you close the TUI. The edit workspace lives in memory and ends with it. `DOWNLOAD_MAX_TOTAL_BYTES` caps one user's exports; compose mounts `/downloads` as a tmpfs of `DOWNLOADS_TMPFS_SIZE` (default 256 MiB).
 
 Small models follow the format less reliably, and larger edits need context: raise `CONTEXT_TOKEN_BUDGET` and pick a larger context size so the model sees whole files. Tool calling is not used yet; DMR vision models often lack it, and the text blocks work with any chat model. `EDIT_PROTOCOL` is there to add it later.
 
@@ -441,7 +466,7 @@ A model list entry looks like `docker.io/ai/gpt-oss:20b` with an empty `dmr` obj
 go test ./...
 go vet ./...
 go test -race ./...
-docker build -t ssh-llm-tui:1.3.1 .
+docker build -t ssh-llm-tui:1.4.0 .
 ```
 
 Go 1.24 or newer. The module downloads a newer toolchain if the system Go is older.

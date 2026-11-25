@@ -380,7 +380,7 @@ func (c *Config) normalize() {
 		c.Uploads.MaxFiles = 1000
 	}
 	if c.Uploads.MaxTotalBytes <= 0 {
-		c.Uploads.MaxTotalBytes = 200 << 20
+		c.Uploads.MaxTotalBytes = 256 << 20
 	}
 	c.Uploads.Ignore = strings.TrimSpace(c.Uploads.Ignore)
 	if c.Uploads.Ignore == "" {
@@ -497,7 +497,7 @@ func (c *Config) normalizeEdit() {
 		d.Dir = "/downloads"
 	}
 	if d.MaxTotalBytes <= 0 {
-		d.MaxTotalBytes = 200 << 20
+		d.MaxTotalBytes = 256 << 20
 	}
 	d.Archive = strings.ToLower(strings.TrimSpace(d.Archive))
 	if d.Archive == "" {
@@ -638,12 +638,8 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 	set("DOWNLOAD_DIR", &c.Downloads.Dir)
 	set("DOWNLOAD_ARCHIVE", &c.Downloads.Archive)
 	set("PUBLIC_HOST", &c.Downloads.PublicHost)
-	if v, ok := lookup(getenv, "DOWNLOAD_MAX_TOTAL_BYTES"); ok {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n <= 0 {
-			return fmt.Errorf("DOWNLOAD_MAX_TOTAL_BYTES must be a positive integer")
-		}
-		c.Downloads.MaxTotalBytes = n
+	if err := positiveBytesEnv(getenv, "DOWNLOAD_MAX_TOTAL_BYTES", &c.Downloads.MaxTotalBytes); err != nil {
+		return err
 	}
 	if v, ok := lookup(getenv, "PUBLIC_PORT"); ok {
 		n, err := strconv.Atoi(v)
@@ -653,15 +649,8 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 		c.Downloads.PublicPort = n
 	}
 	set("NVIDIA_SMI", &c.GPU.SMIPath)
-	if v, ok := lookup(getenv, "UPLOAD_MAX_BYTES"); ok {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			return fmt.Errorf("UPLOAD_MAX_BYTES: %w", err)
-		}
-		if n <= 0 {
-			return fmt.Errorf("UPLOAD_MAX_BYTES must be > 0")
-		}
-		c.Uploads.MaxBytes = n
+	if err := positiveBytesEnv(getenv, "UPLOAD_MAX_BYTES", &c.Uploads.MaxBytes); err != nil {
+		return err
 	}
 	if v, ok := lookup(getenv, "UPLOAD_MAX_FILES"); ok {
 		n, err := strconv.Atoi(v)
@@ -673,15 +662,8 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 		}
 		c.Uploads.MaxFiles = n
 	}
-	if v, ok := lookup(getenv, "UPLOAD_MAX_TOTAL_BYTES"); ok {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			return fmt.Errorf("UPLOAD_MAX_TOTAL_BYTES: %w", err)
-		}
-		if n <= 0 {
-			return fmt.Errorf("UPLOAD_MAX_TOTAL_BYTES must be > 0")
-		}
-		c.Uploads.MaxTotalBytes = n
+	if err := positiveBytesEnv(getenv, "UPLOAD_MAX_TOTAL_BYTES", &c.Uploads.MaxTotalBytes); err != nil {
+		return err
 	}
 	set("UPLOAD_IGNORE", &c.Uploads.Ignore)
 	if v, ok := lookup(getenv, "UPLOAD_AUTO_INCLUDE"); ok {
@@ -714,15 +696,8 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 		}
 		c.Uploads.ImageMaxPx = n
 	}
-	if v, ok := lookup(getenv, "IMAGE_MAX_BYTES"); ok {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			return fmt.Errorf("IMAGE_MAX_BYTES: %w", err)
-		}
-		if n <= 0 {
-			return fmt.Errorf("IMAGE_MAX_BYTES must be > 0")
-		}
-		c.Uploads.ImageMaxBytes = n
+	if err := positiveBytesEnv(getenv, "IMAGE_MAX_BYTES", &c.Uploads.ImageMaxBytes); err != nil {
+		return err
 	}
 	if v, ok := lookup(getenv, "FILES_BOX_ROWS"); ok {
 		n, err := strconv.Atoi(v)

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/UnixEU/ssh-llm-tui/internal/config"
+	"github.com/UnixEU/ssh-llm-tui/internal/diskspace"
 	"github.com/UnixEU/ssh-llm-tui/internal/dmr"
 	"github.com/UnixEU/ssh-llm-tui/internal/downloads"
 	"github.com/UnixEU/ssh-llm-tui/internal/edits"
@@ -30,7 +31,7 @@ import (
 )
 
 // version is the release. The Docker build may override it with -X.
-var version = "1.3.1"
+var version = "1.4.0"
 
 const defaultConfigPath = "/config/config.yaml"
 
@@ -80,6 +81,10 @@ func run() error {
 	if _, err := os.Stat(cfg.Downloads.Dir); err != nil {
 		logger.Printf("warning: download dir %s: %v (exports will fail)", cfg.Downloads.Dir, err)
 	}
+	checkSpace(logger, []diskspace.Check{
+		{Name: "UPLOAD_MAX_TOTAL_BYTES", Dir: cfg.Uploads.Dir, Limit: cfg.Uploads.MaxTotalBytes},
+		{Name: "DOWNLOAD_MAX_TOTAL_BYTES", Dir: cfg.Downloads.Dir, Limit: cfg.Downloads.MaxTotalBytes},
+	})
 	workspaces := edits.NewManager()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -188,4 +193,20 @@ func probeDMR(logger *log.Logger, client *dmr.Client, base string) {
 		return
 	}
 	logger.Printf("DMR reachable at %s (%d model(s) pulled)", base, len(models))
+}
+
+// checkSpace warns when a per-user limit is larger than the filesystem
+// that holds it (usually a compose tmpfs), since uploads or exports would
+// then fail before the limit is reached.
+func checkSpace(logger *log.Logger, checks []diskspace.Check) {
+	for _, c := range checks {
+		info, err := diskspace.Read(c.Dir)
+		if err != nil {
+			continue
+		}
+		if diskspace.Short(info, c.Limit) {
+			logger.Printf("warning: %s is %s, but %s holds only %s; raise the tmpfs size (UPLOADS_TMPFS_SIZE / DOWNLOADS_TMPFS_SIZE in .env) or lower the limit",
+				c.Name, config.FormatBytes(c.Limit), c.Dir, config.FormatBytes(info.TotalBytes))
+		}
+	}
 }

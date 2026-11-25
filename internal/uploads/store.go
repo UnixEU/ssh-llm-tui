@@ -21,7 +21,7 @@ import (
 const (
 	DefaultMaxBytes      = 10 << 20
 	DefaultMaxFiles      = 1000
-	DefaultMaxTotalBytes = 200 << 20
+	DefaultMaxTotalBytes = 256 << 20
 	DefaultBudget        = 8192
 	// DefaultAutoInclude is how many files are switched into the prompt
 	// automatically. Later uploads arrive excluded.

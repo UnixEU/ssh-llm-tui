@@ -122,7 +122,7 @@ downloads:
   # Edited files, changes.patch and tar.gz archives, read-only for clients
   # (get and delete). Removed with the user's last TUI session.
   dir: /downloads
-  max_total_bytes: 209715200
+  max_total_bytes: 268435456
   archive: tar.gz
   # Host and port shown in the download commands. Empty host prints "host";
   # port 0 uses the SSH port.

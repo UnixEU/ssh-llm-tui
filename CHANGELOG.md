@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.0
+
+### Upload and download space
+
+- `/uploads` and `/downloads` tmpfs sizes come from `UPLOADS_TMPFS_SIZE` and `DOWNLOADS_TMPFS_SIZE` (default `256m` each, was a fixed 512 MiB) in a compose `.env` file. See `.env.example`. tmpfs lives in host RAM and only uses what is stored.
+- `UPLOAD_MAX_TOTAL_BYTES` and `DOWNLOAD_MAX_TOTAL_BYTES` default to 256 MiB per user (was 200 MiB). `UPLOAD_MAX_BYTES` stays 10 MiB per file.
+- Every `*_BYTES` setting accepts sizes with a binary unit (`512k`, `256M`, `256MiB`, `1G`, `1.5G`) as well as plain bytes.
+- At start the server warns when a per-user limit is larger than the filesystem that holds it.
+
 ## 1.3.1
 
 - The welcome banner is copied into the image at build time from `banner.txt`. It no longer depends on a host bind mount. Edit `banner.txt` and rebuild to customise it. `WELCOME_MESSAGE` is still the fallback when the file is missing, empty, or does not fit the terminal.
