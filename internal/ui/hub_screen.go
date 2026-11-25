@@ -416,6 +416,13 @@ func (m *Model) readModelDisk() (diskspace.Info, error) {
 }
 
 func (m *Model) installed(ref string) bool {
+	if m.pulls != nil {
+		for _, j := range m.pulls.Jobs() {
+			if j.State == pull.Done && j.Ref == ref {
+				return true
+			}
+		}
+	}
 	for _, md := range m.models {
 		if dmr.SameModel(md.ID, ref) || dmr.SameModel(md.ID, strings.TrimSuffix(ref, ":latest")) {
 			return true
@@ -428,7 +435,9 @@ func (m *Model) onHubConfirmKey(key string) (tea.Model, tea.Cmd) {
 	h := m.hub
 	c := h.confirm
 	switch key {
-	case "y", "Y", "enter":
+	case "y", "Y":
+		// Only an explicit y starts a download; enter does not, so a
+		// repeated enter cannot queue a large pull by accident.
 		if !c.space.OK() {
 			return m, nil
 		}
@@ -461,6 +470,9 @@ func (m *Model) cancelJob() {
 		h.note = "Only " + j.User + " can cancel " + j.Ref + "."
 	case m.pulls.Cancel(j.ID):
 		h.note = "Cancelled " + j.Ref + "."
+		if j.Done > 0 {
+			h.note += " DMR keeps the " + config.FormatBytes(j.Done) + " already downloaded so a new pull resumes; it removes unfinished downloads older than 7 days when it starts."
+		}
 	}
 }
 
@@ -570,8 +582,10 @@ func (m *Model) tagLines(width, rows int) []string {
 	switch {
 	case h.tagErr[r.Name] != "":
 		return append(out, m.theme.err.Render(h.tagErr[r.Name]), m.theme.muted.Render("r retries"))
-	case !have:
+	case !have && h.tagsFor == r.Name:
 		return append(out, m.theme.spinner.Render(m.spinner.View()+" ")+m.theme.status.Render("Reading tags…"))
+	case !have:
+		return append(out, m.theme.muted.Render("enter lists the tags"))
 	case len(tags) == 0:
 		return append(out, m.theme.muted.Render("No tags the llama.cpp backend can run."))
 	}
@@ -699,9 +713,9 @@ func (m *Model) jobLine(j pull.Job, selected bool) string {
 		if j.Rate > 0 {
 			info += " · " + config.FormatBytes(int64(j.Rate)) + "/s"
 		}
-	case pull.Queued:
-		if j.Size > 0 {
-			info = config.FormatBytes(j.Size)
+	case pull.Queued, pull.Done:
+		if e := j.Expected(); e > 0 {
+			info = config.FormatBytes(e)
 		}
 	case pull.Failed:
 		info = j.Err

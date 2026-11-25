@@ -34,7 +34,7 @@ import (
 )
 
 // version is the release. The Docker build may override it with -X.
-var version = "1.4.0"
+var version = "1.4.1"
 
 const defaultConfigPath = "/config/config.yaml"
 

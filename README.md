@@ -2,9 +2,9 @@
 
 SSH terminal chat for local models served by [Docker Model Runner](https://docs.docker.com/ai/model-runner/) (DMR). Connect with `ssh -p 2222 user@host` and you get this app instead of a shell.
 
-Version 1.4.0. The interface is a terminal UI, built with Go and the Charm stack (Wish, Bubble Tea, Lip Gloss, Bubbles). Released under the MIT license. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
+Version 1.4.1. The interface is a terminal UI, built with Go and the Charm stack (Wish, Bubble Tea, Lip Gloss, Bubbles). Released under the MIT license. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
 
-The container talks to DMR only over HTTP. It does not mount the Docker socket and it does not call the `docker` CLI, so it cannot pull models or start containers.
+The container talks to DMR only over HTTP. It does not mount the Docker socket and it does not call the `docker` CLI, so it cannot start containers. Models are pulled through DMR's HTTP API from the Docker Hub screen (`p` on the model list), which can be turned off.
 
 ## Screenshots
 
@@ -415,9 +415,11 @@ y queues the pull · n cancels
 
 The size is the tag's size on the Hub. Free space is read from the filesystem behind `MODEL_STORE_PATH` (the read-only mount of DMR's model store, so the disk where the model ends up). When the download, what queued pulls still need and `MODEL_PULL_MIN_FREE` do not fit, the pull is refused with the shortfall. Without `MODEL_STORE_PATH` the free space is unknown; the screen says so and `y` pulls anyway.
 
-`y` queues the pull. It runs in the background through DMR's `POST /models/create`, keeps going when you leave the screen or disconnect, and the queue is shared: everyone sees all pulls with a progress bar, size, speed and who started them. `tab` reaches the downloads; `c` cancels your own pull. The model list shows how many pulls are running; refresh it with `r` once one is done. Pulls are open to every user who can log in. Set `MODEL_PULL=off` to hide them.
+Only `y` queues the pull; enter does not, so a repeated enter cannot start a large download. It runs in the background through DMR's `POST /models/create`, keeps going when you leave the screen or disconnect, and the queue is shared: everyone sees all pulls with a progress bar, size, speed and who started them. `tab` reaches the downloads; `c` cancels your own pull. The model list shows how many pulls are running; refresh it with `r` once one is done. Pulls are open to every user who can log in. Set `MODEL_PULL=off` to hide them.
 
 The container needs outbound HTTPS to `hub.docker.com` for the search. DMR downloads the model itself.
+
+A cancelled or failed pull leaves its partial layer in DMR's store (`blobs/sha256/<digest>.incomplete` in the model volume). DMR keeps it so pulling the same model again resumes the download, and it deletes unfinished downloads older than 7 days when it starts. Until then the partial file counts against the free space shown here. To reclaim it sooner, pull the model again and remove it, or delete the `.incomplete` file from the volume while no pull is running.
 
 ## Markdown
 
@@ -535,7 +537,7 @@ A model list entry looks like `docker.io/ai/gpt-oss:20b` with an empty `dmr` obj
 go test ./...
 go vet ./...
 go test -race ./...
-docker build -t ssh-llm-tui:1.4.0 .
+docker build -t ssh-llm-tui:1.4.1 .
 ```
 
 Go 1.24 or newer. The module downloads a newer toolchain if the system Go is older.

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.1
+
+- Docker Hub screen: only `y` starts a pull; enter no longer confirms, so a repeated enter cannot queue a large download.
+- Cancelling a pull says that DMR keeps the partial download for a resume. The README explains where it lives and when DMR removes it.
+- Tags just pulled in the session are marked `✓ pulled` without leaving the screen; finished pulls show their size.
+- Repositories that only hold safetensors builds are hidden with vLLM ones unless `HUB_ALL_TAGS=on`.
+- The tag pane says `enter lists the tags` instead of a spinner while the search box has focus.
+- The model list no longer keeps showing "Fetching models…" after the list arrived, and the empty list mentions `p`.
+
 ## 1.4.0
 
 ### Upload and download space

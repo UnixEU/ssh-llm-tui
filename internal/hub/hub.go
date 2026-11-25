@@ -58,7 +58,7 @@ type Options struct {
 	TTL       time.Duration
 	HTTP      *http.Client
 	// AllTags keeps repos and tags that DMR's llama.cpp backend cannot
-	// run (vLLM repos, MLX and safetensors tags).
+	// run (vLLM, MLX and safetensors builds).
 	AllTags bool
 }
 
@@ -164,7 +164,7 @@ func (c *Client) Repos(ctx context.Context) ([]Repo, error) {
 					continue
 				}
 				seen[r.Name] = true
-				if !c.allTags && strings.HasSuffix(r.Name, "-vllm") {
+				if !c.allTags && !Runnable(r.Name) {
 					continue
 				}
 				out = append(out, Repo{Name: r.Name, Description: strings.TrimSpace(r.Description), Pulls: r.PullCount, Stars: r.StarCount, Updated: r.LastUpdated})
@@ -248,8 +248,9 @@ func (c *Client) get(ctx context.Context, u string, dst any) error {
 	return json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(dst)
 }
 
-// Runnable reports whether a tag is a GGUF build the llama.cpp backend can
-// run. MLX and safetensors builds are for other backends.
+// Runnable reports whether a tag or repository name is a GGUF build the
+// llama.cpp backend can run. MLX, safetensors and vLLM builds are for other
+// backends.
 func Runnable(tag string) bool {
 	t := strings.ToLower(tag)
 	return !strings.Contains(t, "mlx") && !strings.Contains(t, "safetensors") && !strings.Contains(t, "vllm")

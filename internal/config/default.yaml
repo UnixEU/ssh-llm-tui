@@ -53,7 +53,7 @@ models:
     No models are pulled into Docker Model Runner yet.
 
     The runner answered, and its model list is empty. Pull a model on
-    the Docker host (this SSH session cannot pull one), for example:
+    the Docker host, for example:
 
       docker model pull ai/smollm2
 
